@@ -1,9 +1,10 @@
 # data/
 
-Lokale Daten, nicht im Repository:
+Local data, not in the repository:
 
-* `raw/` – eigene Rohaufnahmen (`ota record`)
-* `synthetic/` – erzeugte Testvideos (`ota synth`)
-* `crops/` – Trainingsausschnitte (`tools/extract_aot_crops.py`)
+* `raw/` – own recordings (`ota record`)
+* `synthetic/` – generated test videos (`ota synth`)
+* `aot/` – AOT ground truth (`groundtruth.csv`)
+* `crops/` – training crops (`tools/fetch_aot_crops.py`)
 
-Siehe docs/datensammlung.md und docs/training.md.
+See docs/data-collection.md and docs/training.md.

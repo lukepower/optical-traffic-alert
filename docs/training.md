@@ -1,92 +1,112 @@
-# Klassifikator trainieren
+# Training the classifier
 
-Der Klassifikator (Stufe 2) entscheidet für jeden Kandidaten-Ausschnitt: **Flugzeug**, **Vogel**
-oder **Hintergrund**. Trainiert wird auf einem Rechner mit NVIDIA-GPU (z. B. 24 GB VRAM); der Laptop
-führt das fertige Modell nur aus.
+The classifier (stage 2) decides for each candidate crop: **aircraft**, **bird** or **background**.
+Training runs on a machine with an NVIDIA GPU; the laptop only runs the finished model.
 
-## Überblick
+## Overview
 
 ```
-AOT-Datensatz (S3) ──► extract_aot_crops.py ──► data/crops/{train,val}/{aircraft,background,bird}
-                                                         │
-                                       train_classifier.py (Ultralytics, GPU)
-                                                         │
-                                  models/classifier.xml + .bin (OpenVINO) ──► Laptop
+AOT dataset (public S3) ──► fetch_aot_crops.py ──► data/crops/{train,val}/{aircraft,background,bird}
+                                                          │
+                                        train_classifier.py (Ultralytics, GPU)
+                                                          │
+                                   models/classifier.xml + .bin (OpenVINO) ──► laptop
 ```
 
-## 1. Daten: Airborne Object Tracking (AOT)
+## 1. Data: Airborne Object Tracking (AOT)
 
-Der AOT-Datensatz von Amazon Prime Air liegt frei im AWS Open Data Registry
+The AOT dataset by Amazon Prime Air is freely available in the AWS Open Data Registry
 ([registry.opendata.aws/airborne-object-tracking](https://registry.opendata.aws/airborne-object-tracking)).
-Er enthält echte Luft-zu-Luft-Flüge mit annotierten Begegnungen: Flugzeuge, Helikopter, Vögel,
-Drohnen – viele davon nur wenige Pixel groß, also genau unser Problem.
+It contains real air-to-air flights with annotated encounters: airplanes, helicopters, birds,
+drones – many of them only a few pixels in size, which is exactly our problem. Frames are
+2448×2048 grayscale PNGs.
 
-Der komplette Datensatz ist mehrere Terabyte groß. **Nicht alles laden** – für den Klassifikator
-reichen einige Dutzend Flüge.
-
-```powershell
-# AWS CLI installieren, dann ohne Login (öffentlicher Bucket):
-aws s3 cp --no-sign-request s3://airborne-obj-detection-challenge-training/part1/ImageSets/groundtruth.json D:\aot\part1\ImageSets\
-# einzelne Flüge (Ordnernamen aus groundtruth.json bzw. per "aws s3 ls"):
-aws s3 sync --no-sign-request s3://airborne-obj-detection-challenge-training/part1/Images/<flight_id> D:\aot\part1\Images\<flight_id>
-```
-
-Ground-Truth-Felder, die das Skript nutzt (pro annotiertem Objekt): `img_name`, `flight_id`,
-`id` (z. B. `Airplane1`, `Bird3`), `bb` = `[links, oben, breite, höhe]`, `labels.is_above_horizon`.
-Das Skript sucht diese Einträge tolerant im JSON, unabhängig von der genauen Verschachtelung.
-
-## 2. Ausschnitte erzeugen
+The full dataset is several terabytes. **Do not download it all.** `tools/fetch_aot_crops.py`
+downloads only selected frames over plain HTTPS, cuts the crops in memory and discards the frame:
 
 ```powershell
-python tools\extract_aot_crops.py --aot D:\aot\part1 --out data\crops --max-per-flight 400
+# 1. ground truth (~300 MB CSV)
+curl -o data\aot\part1\ImageSets\groundtruth.csv https://airborne-obj-detection-challenge-training.s3.amazonaws.com/part1/ImageSets/groundtruth.csv
+
+# 2. crops (resumable; run again until "0 frames left")
+python tools\fetch_aot_crops.py --gt data\aot\part1\ImageSets\groundtruth.csv --out data\crops --workers 32
 ```
 
-* Flugzeug, Helikopter, Drohne → `aircraft`; Vogel, Schwarm → `bird`
-* pro Objekt ein zufälliger Hintergrund-Ausschnitt aus demselben Bild → `background`
-* Aufteilung in train/val **nach Flügen** – kein Flug landet in beiden Teilen
-* Ausschnittgröße 64 px (= `classifier.crop_px`), bei großen Objekten mit mehr Kontext und
-  herunterskaliert
+Default selection: per flight up to 6 frames with aircraft and up to 20 frames with birds, plus one
+background crop per frame. With part1 (1,311 flights) this is about 15,500 frames and roughly
+50,000 crops:
 
-**Eigene Daten** lassen sich einfach dazulegen: Ausschnitte aus eigenen Videos
-(siehe [datensammlung.md](datensammlung.md)) als PNG in die passenden Ordner kopieren. Besonders
-wertvoll sind **Fehlkandidaten** aus eigenen Aufnahmen (Scheibenreflexe, Wolkenränder, Gelände) als
-`background` – genau die kommen im Flugzeug vor.
+| Split | aircraft | bird | background |
+|---|---|---|---|
+| train | 10,198 | 9,709 | 13,218 |
+| val | 1,690 | 1,607 | 2,284 |
 
-## 3. Trainieren (GPU-Rechner)
+Mapping: Airplane, Helicopter, Drone → `aircraft`; Bird, Flock → `bird`. `Airborne`
+(unidentified objects) is skipped because it mixes both. Train/val are split **by flight** – no
+flight appears in both.
+
+Ground-truth fields used (one row per labelled object): `flight_id`, `img_name`, `frame`, `id`
+(e.g. `Airplane1`, `Bird3`), `gt_left/top/right/bottom`.
+
+If you already have a local copy of the dataset (`aws s3 sync --no-sign-request ...`), use
+`tools/extract_aot_crops.py` instead – it reads `groundtruth.json` and local images.
+
+**Own data** can simply be added: crops from your own videos (see
+[data-collection.md](data-collection.md)) as PNG into the matching folders. **False candidates** from
+your own recordings (windscreen reflections, cloud edges, terrain) are particularly valuable as
+`background` – exactly what occurs in the aircraft.
+
+## 2. Training (GPU machine)
+
+### One click on Windows
+
+Double-click `tools\train_windows.bat`. It
+
+1. creates a separate virtual environment `.venv-train`,
+2. installs PyTorch with CUDA, Ultralytics, OpenVINO and the project,
+3. checks that the GPU is visible,
+4. waits until `data\crops\READY` exists (so it can be started while crops are still downloading),
+5. trains and exports `models\classifier.xml/.bin`.
+
+Everything is logged to `data\train_windows.log`. Options: `tools\train_windows.bat -Epochs 60`.
+
+### Manually
 
 ```bash
 pip install -e .[train]
 python tools/train_classifier.py --data data/crops --epochs 40 --device 0
 ```
 
-* Modell: `yolo11n-cls` (Nano, Klassifikation), Eingabe 64×64
-* Augmentierung bewusst mild (kleine Objekte vertragen keine starken Zuschnitte)
-* Ergebnis: `models/classifier.xml` und `models/classifier.bin`
-* Prüfen, dass Klasse 0 `aircraft` ist (das Skript warnt sonst)
+* Model: `yolo11n-cls` (nano, classification), input 64×64
+* Augmentation deliberately mild (small objects don't tolerate heavy cropping)
+* Result: `models/classifier.xml` and `models/classifier.bin`
+* Check that class 0 is `aircraft` (the script warns otherwise)
 
-## 4. Auf dem Laptop einsetzen
+## 3. Using it on the laptop
 
-`models/classifier.xml` und `.bin` auf den Laptop kopieren, dann in `config/default.yaml`:
+Copy `models/classifier.xml` and `.bin` to the laptop, then in `config/default.yaml`:
 
 ```yaml
 classifier:
   backend: openvino
   model_path: models/classifier.xml
-  device: AUTO        # oder GPU für die Iris Xe
+  device: AUTO        # or GPU for the Iris Xe
   min_probability: 0.5
 ```
 
-## 5. Bewerten
+## 4. Evaluation
 
-* Ultralytics gibt Genauigkeit und Konfusionsmatrix auf `val` aus (`runs/classifier/train`).
-* Wichtiger ist die Wirkung in der Pipeline: Mit und ohne Klassifikator dieselben Videos laufen
-  lassen und `events.jsonl` vergleichen – Anzahl `TRAFFIC`-Ansagen für Nicht-Flugzeuge muss sinken,
-  echte Ziele dürfen nicht verloren gehen.
-* `min_probability` lieber niedrig ansetzen (0,3–0,5): Der Tracker filtert zusätzlich. Ein
-  verworfenes echtes Flugzeug ist schlimmer als ein durchgelassener Vogel.
+* Ultralytics reports accuracy and a confusion matrix on `val` (`runs/classifier/train`).
+* More important is the effect in the pipeline: run the same videos with and without the classifier
+  and compare `events.jsonl` – `TRAFFIC` callouts for non-aircraft must drop, real targets must not
+  be lost.
+* Keep `min_probability` rather low (0.3–0.5): the tracker filters as well. A rejected real aircraft
+  is worse than a bird that gets through.
 
-## Ausblick
+## Outlook
 
-* Jetson: dasselbe Modell nach ONNX → TensorRT exportieren (`format="engine"`).
-* Temporaler Klassifikator: mehrere Ausschnitte desselben Tracks gemeinsam bewerten
-  (Flugzeuge bewegen sich gleichmäßig, Vögel flattern).
+* Jetson: export the same model to ONNX → TensorRT (`format="engine"`).
+* Temporal classifier: rate several crops of the same track together (aircraft move smoothly,
+  birds flap).
+* AOT is mostly flat-country, partly hazy imagery. Own recordings (mountains, haze, sun) will be
+  needed for good performance in alpine terrain.

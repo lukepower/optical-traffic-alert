@@ -24,7 +24,7 @@ Start-Transcript -Path "data\train_windows.log" -Append | Out-Null
 function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
 try {
-    Step "Python suchen"
+    Step "Looking for Python"
     $py = $null
     foreach ($v in @("3.12", "3.11", "3.10")) {
         try { & py "-$v" --version *> $null; if ($LASTEXITCODE -eq 0) { $py = @("py", "-$v"); break } } catch {}
@@ -32,48 +32,48 @@ try {
     if (-not $py) {
         try { & python --version; if ($LASTEXITCODE -eq 0) { $py = @("python") } } catch {}
     }
-    if (-not $py) { throw "Kein Python 3.10-3.12 gefunden. Bitte von python.org installieren (Add to PATH)." }
+    if (-not $py) { throw "No Python 3.10-3.12 found. Please install it from python.org (Add to PATH)." }
     Write-Host "Python: $($py -join ' ')"
 
-    Step "Virtuelle Umgebung .venv-train"
+    Step "Virtual environment .venv-train"
     if (-not (Test-Path ".venv-train\Scripts\python.exe")) {
         & $py[0] $py[1..9] -m venv .venv-train
     }
     $vpy = Join-Path $Root ".venv-train\Scripts\python.exe"
     & $vpy -m pip install --upgrade pip
 
-    Step "PyTorch mit CUDA installieren (ca. 3 GB, dauert etwas)"
+    Step "Installing PyTorch with CUDA (about 3 GB, takes a while)"
     & $vpy -m pip install torch torchvision --index-url $CudaIndex
-    if ($LASTEXITCODE -ne 0) { throw "PyTorch-Installation fehlgeschlagen" }
+    if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed" }
 
-    Step "Ultralytics, OpenVINO und Projekt installieren"
+    Step "Installing Ultralytics, OpenVINO and the project"
     & $vpy -m pip install -e ".[train,openvino]"
-    if ($LASTEXITCODE -ne 0) { throw "Installation fehlgeschlagen" }
+    if ($LASTEXITCODE -ne 0) { throw "Installation failed" }
 
-    Step "GPU pruefen"
+    Step "Checking the GPU"
     & $vpy -c "import torch; ok=torch.cuda.is_available(); print('CUDA:', ok, torch.version.cuda); print('GPU:', torch.cuda.get_device_name(0) if ok else '-'); raise SystemExit(0 if ok else 1)"
-    if ($LASTEXITCODE -ne 0) { throw "Keine CUDA-GPU sichtbar - NVIDIA-Treiber aktuell?" }
+    if ($LASTEXITCODE -ne 0) { throw "No CUDA GPU visible - is the NVIDIA driver up to date?" }
 
-    Step "Warten auf Trainingsdaten ($Data\READY)"
+    Step "Waiting for training data ($Data\READY)"
     while (-not (Test-Path "$Data\READY")) {
         $n = (Get-ChildItem -Recurse -Filter *.png "$Data" -ErrorAction SilentlyContinue | Measure-Object).Count
-        Write-Host ("{0:HH:mm:ss}  {1} Ausschnitte bisher - warte..." -f (Get-Date), $n)
+        Write-Host ("{0:HH:mm:ss}  {1} crops so far - waiting..." -f (Get-Date), $n)
         Start-Sleep -Seconds 30
     }
 
-    Step "Training ($Epochs Epochen)"
+    Step "Training ($Epochs epochs)"
     & $vpy tools\train_classifier.py --data $Data --epochs $Epochs --device 0
-    if ($LASTEXITCODE -ne 0) { throw "Training fehlgeschlagen" }
+    if ($LASTEXITCODE -ne 0) { throw "Training failed" }
 
-    Step "Fertig"
+    Step "Done"
     Get-ChildItem models\classifier.* | Format-Table Name, Length, LastWriteTime
     New-Item -ItemType File -Force -Path "data\TRAINING_DONE" | Out-Null
 }
 catch {
-    Write-Host "`nFEHLER: $_" -ForegroundColor Red
+    Write-Host "`nERROR: $_" -ForegroundColor Red
     New-Item -ItemType File -Force -Path "data\TRAINING_FAILED" | Out-Null
 }
 finally {
     Stop-Transcript | Out-Null
-    Read-Host "`nEnter zum Schliessen"
+    Read-Host "`nPress Enter to close"
 }

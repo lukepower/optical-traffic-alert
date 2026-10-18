@@ -1,78 +1,77 @@
 # Optical Traffic Alert
 
-**Optisches Kollisionswarnsystem für Kleinflugzeuge** – Kameras im Cockpit, eine kompakte
-KI-Box und Sprachansagen ins Intercom:
+**Camera-based collision warning for light aircraft** – cameras in the cockpit, a compact AI box
+and spoken callouts into the intercom:
 
-> *„Traffic, traffic, one o'clock, level, closing.“*
+> *"Traffic, traffic, one o'clock, level, closing."*
 
-Referenzflugzeug ist eine Beechcraft V35A Bonanza, das System ist aber für Hoch- und Tiefdecker
-ausgelegt (Profile in `config/aircraft/`).
+The reference aircraft is a Beechcraft V35A Bonanza, but the system is designed for high-wing and
+low-wing aircraft alike (profiles in `config/aircraft/`).
 
-> ⚠️ **Nicht zertifiziert. Experimentelles Hilfsmittel.** Ersetzt weder Luftraumbeobachtung
-> („see and avoid“) noch zugelassene Systeme wie FLARM, ADS-B oder TAS. Siehe
-> [docs/sicherheit-und-recht.md](docs/sicherheit-und-recht.md).
+> ⚠️ **Not certified. Experimental aid.** It does not replace see-and-avoid, nor approved systems
+> such as FLARM, ADS-B or TAS. See [docs/safety-and-legal.md](docs/safety-and-legal.md).
 
 ---
 
-## Warum optisch?
+## Why optical?
 
-FLARM und ADS-B sehen nur **kooperativen** Verkehr – Luftfahrzeuge, die selbst senden.
-Segelflugzeuge ohne FLARM, Paraglider, Ultraleichte, Ballone und Drohnen bleiben unsichtbar.
-Eine Kamera sieht alles, was sich gegen den Himmel abhebt, und sie schaut nie weg – auch nicht
-während Checkliste, Funk oder Navigation.
+FLARM and ADS-B only see **cooperative** traffic – aircraft that transmit themselves. Gliders without
+FLARM, paragliders, ultralights, balloons and drones stay invisible. A camera sees everything that
+stands out against the sky, and it never looks away – not during checklists, radio calls or
+navigation.
 
-Die eigentliche Herausforderung ist die **Distanz**: Ein Kleinflugzeug frontal (~3 m Querschnitt)
-ist auf 2 km bei einer 4K-Kamera mit 50° Bildwinkel nur **etwa 5 Pixel** groß. Bei 100 m/s
-Annäherung (zwei Kleinflugzeuge frontal) bleiben ab 2 km nur 20 Sekunden.
+The real challenge is **range**: a light aircraft seen head-on (~3 m cross-section) is only
+**about 5 pixels** wide at 2 km with a 4K camera and a 50° field of view. At a closing speed of
+100 m/s (two light aircraft head-on), 2 km leaves just 20 seconds.
 
-## Wie es funktioniert
+## How it works
 
 ```
-Kamera(s) ──► Kandidaten ──► Klassifikator ──► Tracker ──► Bedrohungs- ──► Sprachansage
-              (OpenCV,        (kleines CNN,     (über viele   bewertung      (Intercom)
-               Echtzeit)       nur Ausschnitte)  Frames)      (Peilung + τ)
-                                                     ▲
-                                  IMU (Eigendrehung) ┘   ADS-B/FLARM (Abgleich, später)
+camera(s) ──► candidates ──► classifier ──► tracker ──► threat ──► spoken callout
+              (OpenCV,        (small CNN,    (over many   assessment  (intercom)
+               real time)      crops only)    frames)     (bearing + τ)
+                                                ▲
+                          IMU (own rotation) ───┘   ADS-B/FLARM (cross-check, later)
 ```
 
-1. **Kandidaten** – ein morphologischer Filter (Black-Hat/Top-Hat) hebt kleine, kontrastreiche
-   Punkte gegen den Himmel hervor. Läuft auch in 4K in Echtzeit auf einer Laptop-CPU.
-2. **Klassifikator** – ein kleines neuronales Netz bewertet nur 64×64-px-Ausschnitte um die
-   Kandidaten: Flugzeug, Vogel oder Hintergrund. Läuft per **OpenVINO** auf Intel-GPUs (Iris Xe)
-   und später per TensorRT auf dem Jetson.
-3. **Tracker** – nur was über viele Frames konsistent gesehen wird, ist ein Ziel.
-   Rauschen und Insekten verschwinden, Flecken auf der Scheibe bewegen sich nie.
-4. **Bedrohungsbewertung** – die Regel, die jeder Pilot lernt: **konstante Peilung und wachsende
-   Größe = Kollisionskurs**. Aus dem Größenwachstum wird die Zeit bis zur Begegnung (τ) geschätzt.
-5. **Ansage** – im TCAS/FLARM-Stil, mit Regeln gegen Ansage-Flut (siehe
-   [docs/architektur.md](docs/architektur.md#ansagen)).
+1. **Candidates** – a morphological filter (black-hat/top-hat) highlights small, high-contrast
+   spots against the sky. Runs in real time even at 4K on a laptop CPU.
+2. **Classifier** – a small neural network looks only at 64×64 px crops around the candidates:
+   aircraft, bird or background. Runs via **OpenVINO** on Intel GPUs (Iris Xe) and later via
+   TensorRT on the Jetson.
+3. **Tracker** – only what is seen consistently over many frames is a target. Noise and insects
+   disappear; specks on the windscreen never move.
+4. **Threat assessment** – the rule every pilot learns: **constant bearing and growing size =
+   collision course**. The growth rate gives an estimate of the time to contact (τ).
+5. **Callout** – TCAS/FLARM style, with rules against callout flooding (see
+   [docs/architecture.md](docs/architecture.md#callouts)).
 
-| Stufe | Bedeutung | Ansage |
+| Level | Meaning | Callout |
 |---|---|---|
-| `TRAFFIC` | bestätigtes, sich bewegendes Ziel, keine Kollisionsgeometrie | „Traffic, two o'clock, high.“ |
-| `ADVISORY` | konstante Peilung, wird größer, τ < 40 s | „Traffic, two o'clock, high, closing.“ |
-| `WARNING` | konstante Peilung, wird größer, τ < 20 s | „Traffic, traffic, two o'clock, high, closing.“ |
+| `TRAFFIC` | confirmed moving target, no collision geometry | "Traffic, two o'clock, high." |
+| `ADVISORY` | constant bearing, growing, τ < 40 s | "Traffic, two o'clock, high, closing." |
+| `WARNING` | constant bearing, growing, τ < 20 s | "Traffic, traffic, two o'clock, high, closing." |
 
-## Schnellstart (Windows-Laptop, ohne Kamera)
+## Quick start (Windows laptop, no camera needed)
 
 ```powershell
-git clone https://github.com/<user>/optical-traffic-alert.git
+git clone https://github.com/lukepower/optical-traffic-alert.git
 cd optical-traffic-alert
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 pip install -e .[dev,tts]
 
-# 1. Synthetisches Testvideo erzeugen (Kollisionsziel, kreuzendes Ziel, Scheibenflecken)
+# 1. Create a synthetic test video (collision target, crossing target, windscreen specks)
 ota synth data/synthetic/test.mp4
 
-# 2. Pipeline darauf laufen lassen – mit Bild und Windows-Sprachausgabe
+# 2. Run the pipeline on it – with video window and Windows speech output
 ota run --video data/synthetic/test.mp4 --show --audio pyttsx3
 
 # 3. Tests
 pytest
 ```
 
-Erwartete Ausgabe (gekürzt):
+Expected output (abridged):
 
 ```
 Highest alert level: WARNING
@@ -81,70 +80,77 @@ Callouts:
   - Traffic, traffic, one o'clock, level, closing.
 ```
 
-Details zur Einrichtung inkl. USB-Kamera, RTL-SDR und Intercom:
-[docs/setup-windows.md](docs/setup-windows.md).
+Full setup including USB camera, RTL-SDR and intercom: [docs/setup-windows.md](docs/setup-windows.md).
 
-## Befehle
+## Commands
 
-| Befehl | Zweck |
+| Command | Purpose |
 |---|---|
-| `ota synth [datei.mp4]` | synthetisches Testvideo + Ground-Truth-JSON erzeugen |
-| `ota run --video datei.mp4 [--show] [--record out.mp4]` | Pipeline auf einem Video |
-| `ota run --aircraft v35a` | Live mit den Kameras aus dem Flugzeugprofil |
-| `ota record --camera usb:0 --out data/raw/flug1.mp4` | Rohvideo aufzeichnen (Datensammlung) |
-| `ota cameras` | angeschlossene USB-Kameras auflisten |
+| `ota synth [file.mp4]` | create a synthetic test video + ground-truth JSON |
+| `ota run --video file.mp4 [--show] [--record out.mp4]` | run the pipeline on a video |
+| `ota run --aircraft v35a` | live, with the cameras from the aircraft profile |
+| `ota record --camera usb:0 --out data/raw/flight1.mp4` | record raw video (data collection) |
+| `ota cameras` | list connected USB cameras |
 
-Wichtige Optionen von `ota run`: `--audio print|pyttsx3|piper`, `--language en|de`,
-`--realtime` (Video in Echtzeit abspielen), `--stride 2` (nur jeden 2. Frame, für schwache Hardware),
-`--hfov 50` (Bildwinkel der Kamera, mit der das Video aufgenommen wurde).
+Important options of `ota run`: `--audio print|pyttsx3|piper`, `--language en|de`,
+`--realtime` (play video files at real speed), `--stride 2` (every 2nd frame only, for weak
+hardware), `--hfov 50` (field of view of the camera that recorded the video).
 
-## Projektstruktur
+## Project layout
 
 ```
 config/
-  default.yaml              Verarbeitungsparameter (alle Werte dokumentiert)
-  aircraft/v35a.yaml        Kameraeinbau V35A (Tiefdecker)
+  default.yaml              processing parameters (all values documented)
+  aircraft/v35a.yaml        camera installation V35A (low wing)
   aircraft/high-wing-generic.yaml
 src/ota/
-  sources/                  Bildquellen: Videodatei, USB-Kamera, (GMSL2 auf Jetson)
-  detection/candidates.py   Stufe 1: Kandidaten (OpenCV)
-  detection/classifier.py   Stufe 2: Ausschnitt-Klassifikator (OpenVINO)
-  tracking/tracker.py       Multi-Target-Tracker (Alpha-Beta-Filter)
-  tracking/threat.py        Kollisionslogik: Peilungsrate, Wachstum, τ
-  audio/announcer.py        Ansagen + Sprachausgabe (Konsole, Windows SAPI, Piper)
-  sensors/adsb.py           ADS-B über dump1090/readsb (SBS-1, Port 30003)
-  sensors/imu.py            IMU (BNO085 über USB-Mikrocontroller)
-  geometry.py               Pixel → Azimut/Elevation → Uhrzeit, high/low
-  pipeline.py               Verkettung, Overlay, Ereignisprotokoll
-  synth.py                  Testvideo-Generator
-  cli.py                    Kommandozeile `ota`
+  sources/                  frame sources: video file, USB camera, (GMSL2 on Jetson)
+  detection/candidates.py   stage 1: candidates (OpenCV)
+  detection/classifier.py   stage 2: crop classifier (OpenVINO)
+  tracking/tracker.py       multi-target tracker (alpha-beta filter)
+  tracking/threat.py        collision logic: bearing rate, growth, τ
+  audio/announcer.py        callouts + speech output (console, Windows SAPI, Piper)
+  sensors/adsb.py           ADS-B via dump1090/readsb (SBS-1, port 30003)
+  sensors/imu.py            IMU (BNO085 via USB microcontroller)
+  geometry.py               pixel → azimuth/elevation → clock position, high/low
+  pipeline.py               wiring, overlay, event log
+  synth.py                  test video generator
+  cli.py                    command line `ota`
 tools/
-  extract_aot_crops.py      Trainingsdaten aus dem AOT-Datensatz schneiden
-  train_classifier.py       Klassifikator trainieren + nach OpenVINO exportieren
-tests/                      pytest, inkl. End-to-End-Test auf synthetischem Video
-docs/                       Dokumentation (siehe unten)
+  fetch_aot_crops.py        stream AOT frames from S3 and cut training crops
+  extract_aot_crops.py      same, from a local copy of the AOT dataset
+  train_classifier.py       train the classifier + export to OpenVINO
+  train_windows.bat/.ps1    one-click GPU training on Windows
+tests/                      pytest, incl. end-to-end test on a synthetic video
+docs/                       documentation (see below)
 ```
 
-## Dokumentation
+## Documentation
 
-| Dokument | Inhalt |
+| Document | Contents |
 |---|---|
-| [docs/architektur.md](docs/architektur.md) | Aufbau, Algorithmen, Parameter, bekannte Grenzen |
-| [docs/setup-windows.md](docs/setup-windows.md) | Einrichtung auf dem Laptop: Python, Kamera, Audio, SDR |
-| [docs/training.md](docs/training.md) | Klassifikator trainieren (AOT-Datensatz, GPU-Rechner) |
-| [docs/kalibrierung.md](docs/kalibrierung.md) | Kameras einbauen und einmessen, Flugzeugprofile |
-| [docs/hardware.md](docs/hardware.md) | Hardware, Stromversorgung, EMV, Stückliste |
-| [docs/datensammlung.md](docs/datensammlung.md) | Eigene Aufnahmen am Boden und im Flug |
-| [docs/roadmap.md](docs/roadmap.md) | Phasen und nächste Schritte |
-| [docs/sicherheit-und-recht.md](docs/sicherheit-und-recht.md) | Grenzen, Haftung, EASA-Einordnung |
+| [docs/architecture.md](docs/architecture.md) | design, algorithms, parameters, known limits |
+| [docs/setup-windows.md](docs/setup-windows.md) | laptop setup: Python, camera, audio, SDR |
+| [docs/training.md](docs/training.md) | training the classifier (AOT dataset, GPU machine) |
+| [docs/calibration.md](docs/calibration.md) | mounting and calibrating cameras, aircraft profiles |
+| [docs/hardware.md](docs/hardware.md) | hardware, power supply, EMC, bill of materials |
+| [docs/data-collection.md](docs/data-collection.md) | own recordings on the ground and in flight |
+| [docs/roadmap.md](docs/roadmap.md) | phases and next steps |
+| [docs/safety-and-legal.md](docs/safety-and-legal.md) | limits, liability, EASA considerations |
 
-## Stand
+## Status
 
-Phase 1 (Bodenprototyp auf dem Laptop): Pipeline läuft durchgängig auf Videodateien und USB-Kameras,
-erkennt im synthetischen Szenario das Kollisionsziel als `WARNING` und unterdrückt Scheibenflecken.
-Der Klassifikator ist vorbereitet, aber noch nicht trainiert (`classifier.backend: none`).
-Siehe [docs/roadmap.md](docs/roadmap.md).
+Phase 1 (ground prototype on a laptop): the pipeline runs end to end on video files and USB cameras,
+flags the collision target in the synthetic scenario as `WARNING` and suppresses windscreen specks.
+The classifier is being trained on the AOT dataset; until a model is in `models/`, the pipeline runs
+with `classifier.backend: none`. See [docs/roadmap.md](docs/roadmap.md).
 
-## Lizenz
+## Contributing
 
-MIT – siehe [LICENSE](LICENSE).
+Issues and pull requests are welcome. Please run `pytest` before submitting, keep code comments and
+documentation in English, and remember that this is safety-related software: prefer conservative
+changes and describe how you tested them.
+
+## License
+
+MIT – see [LICENSE](LICENSE).

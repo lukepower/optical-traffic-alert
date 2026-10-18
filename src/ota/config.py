@@ -70,7 +70,7 @@ class DetectorConfig:
     # Reject candidates whose surrounding background is not uniform (horizon
     # edge, terrain texture). Local std of the background in grey levels;
     # 0 disables. Phase 1 therefore concentrates on targets against the sky,
-    # below-horizon targets need the trained classifier (docs/architektur.md).
+    # below-horizon targets need the trained classifier (docs/architecture.md).
     max_background_std: float = 18.0
     # Only search in the sky: the frame is split into bright (sky) and dark
     # (terrain) regions per frame (Otsu threshold on a blurred thumbnail),

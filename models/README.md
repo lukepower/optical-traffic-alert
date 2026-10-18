@@ -1,6 +1,6 @@
 # models/
 
-Nicht im Repository, lokal ablegen:
+Not in the repository, keep locally:
 
-* `classifier.xml` + `classifier.bin` – trainierter Klassifikator (OpenVINO), siehe docs/training.md
-* `tts/*.onnx` (+ `.onnx.json`) – Piper-Stimmen, siehe docs/setup-windows.md
+* `classifier.xml` + `classifier.bin` – trained classifier (OpenVINO), see docs/training.md
+* `tts/*.onnx` (+ `.onnx.json`) – Piper voices, see docs/setup-windows.md

@@ -4,7 +4,7 @@
 # Angles: yaw + = right, pitch + = up, relative to the longitudinal axis.
 # Masks: normalised rectangles (0..1) that are ignored by the detector.
 # The values below are a starting point - measure your real mounting
-# (docs/kalibrierung.md) and adjust.
+# (docs/calibration.md) and adjust.
 
 aircraft: v35a
 

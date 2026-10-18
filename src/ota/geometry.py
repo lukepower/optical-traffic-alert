@@ -8,7 +8,7 @@ Coordinate conventions (aircraft body frame):
 
 A simple pinhole model is used. Lens distortion is ignored for now; for the
 narrow lenses planned (40-60 deg) the error is small compared with the
-resolution of a clock position (30 deg). See docs/kalibrierung.md.
+resolution of a clock position (30 deg). See docs/calibration.md.
 """
 
 from __future__ import annotations

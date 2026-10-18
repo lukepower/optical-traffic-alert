@@ -15,7 +15,7 @@ Why fuse ADS-B with the cameras?
   the optical tau estimate during test flights.
 
 FLARM on 868 MHz is received with a second SDR and OGN tooling; it can feed
-the same ``TrafficTarget`` structure (see docs/architektur.md).
+the same ``TrafficTarget`` structure (see docs/architecture.md).
 """
 
 from __future__ import annotations

@@ -1,33 +1,34 @@
 # Roadmap
 
-## Phase 1 – Bodenprototyp auf dem Laptop
+## Phase 1 – ground prototype on a laptop
 
-- [x] Projektgerüst, Konfiguration, Flugzeugprofile (V35A, Hochdecker)
-- [x] Bildquellen: Videodatei, USB-Kamera
-- [x] Kandidatendetektor (Morphologie, Bildpyramide, Himmelsmaske)
-- [x] Tracker (Alpha-Beta, Bestätigung, Verlust)
-- [x] Bedrohungsbewertung (Peilungsrate, robustes Wachstum, τ, Hysterese, statische Objekte)
-- [x] Ansagen (EN/DE, Rate-Limits, Sektor-Deduplizierung), Windows-SAPI und Piper
-- [x] Synthetischer Testvideo-Generator, End-to-End-Test
-- [x] ADS-B-Parser (SBS-1), IMU-Parser
-- [ ] Eigene Bodenaufnahmen am Flugplatz sammeln
-- [ ] Klassifikator auf AOT + eigenen Daten trainieren, OpenVINO auf der Iris Xe
-- [ ] ADS-B-Abgleich in der Pipeline (kooperativ / nicht kooperativ)
-- [ ] Auswerte-Skript: Ereignisprotokoll gegen ADS-B-Wahrheit
+- [x] Project skeleton, configuration, aircraft profiles (V35A, high wing)
+- [x] Frame sources: video file, USB camera
+- [x] Candidate detector (morphology, image pyramid, sky mask)
+- [x] Tracker (alpha-beta, confirmation, loss)
+- [x] Threat assessment (bearing rate, robust growth, τ, hysteresis, static objects)
+- [x] Callouts (EN/DE, rate limits, sector de-duplication), Windows SAPI and Piper
+- [x] Synthetic test video generator, end-to-end test
+- [x] ADS-B parser (SBS-1), IMU parser
+- [x] Training crops from the AOT dataset (`fetch_aot_crops.py`)
+- [ ] Train the classifier, deploy with OpenVINO on the Iris Xe
+- [ ] Collect own ground recordings at an airfield
+- [ ] ADS-B cross-check in the pipeline (cooperative / non-cooperative)
+- [ ] Evaluation script: event log against ADS-B ground truth
 
-## Phase 2 – Flugsystem auf dem Jetson
+## Phase 2 – flight system on a Jetson
 
-- [ ] GMSL2-Quelle über GStreamer, ein Capture-Thread pro Kamera
-- [ ] Klassifikator nach TensorRT
-- [ ] IMU-Integration: Eigendrehung, high/low relativ zum Horizont
-- [ ] Automatische Kalibrierung der Kameralage aus Horizont + IMU
-- [ ] Stromversorgung, Gehäuse, EMV-Test
-- [ ] Erste Flugtests als reiner Rekorder, dann mit Ansagen
+- [ ] GMSL2 source via GStreamer, one capture thread per camera
+- [ ] Classifier on TensorRT
+- [ ] IMU integration: own rotation, high/low relative to the horizon
+- [ ] Automatic calibration of camera attitude from horizon + IMU
+- [ ] Power supply, enclosure, EMC test
+- [ ] First flight tests as a pure recorder, then with callouts
 
-## Phase 3 – Erweiterungen
+## Phase 3 – extensions
 
-- [ ] Ziele unter dem Horizont (Gelände als Hintergrund, Bewegungskompensation)
-- [ ] Temporaler Klassifikator (Bewegungsmuster: Vogel vs. Flugzeug)
-- [ ] FLARM-Empfang (868 MHz, OGN) in die Fusion
-- [ ] Entfernungsschätzung aus Flugzeugtyp/Spannweite
-- [ ] Linsenverzeichnung, Sonnen-/Gegenlichterkennung
+- [ ] Targets below the horizon (terrain background, motion compensation)
+- [ ] Temporal classifier (motion pattern: bird vs. aircraft)
+- [ ] FLARM reception (868 MHz, OGN) in the fusion
+- [ ] Range estimate from aircraft type / wingspan
+- [ ] Lens distortion, sun/glare detection

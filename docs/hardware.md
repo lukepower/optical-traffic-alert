@@ -1,60 +1,60 @@
 # Hardware
 
-Die vollständige Stückliste mit Preisen liegt als Tabelle in
-[hardware/Stueckliste_Traffic_Alert.xlsx](hardware/Stueckliste_Traffic_Alert.xlsx) (Stand Oktober 2026).
+The full bill of materials with prices (October 2026, EUR) is in
+[hardware/bill-of-materials.xlsx](hardware/bill-of-materials.xlsx) (spreadsheet in German).
 
-## Phase 1 – Laptop (Bodentests)
+## Phase 1 – laptop (ground tests)
 
-| Komponente | Beispiel | ca. Preis |
+| Component | Example | approx. price |
 |---|---|---|
-| Laptop | vorhanden (Intel Iris Xe reicht) | – |
-| USB-Kamera | Waveshare IMX678 8MP USB Camera (A) | 60 € |
-| Objektive M12, schmal (8 mm, 12 mm) | diverse | 2 × 30 € |
-| SDR für ADS-B/FLARM | RTL-SDR Blog V4 (+ Antennen) | 2 × 45 € |
-| Audio | USB-Audioadapter, Intercom-Kabel, Massetrennfilter | 65 € |
+| Laptop | existing (Intel Iris Xe is enough) | – |
+| USB camera | Waveshare IMX678 8MP USB Camera (A) | €60 |
+| M12 lenses, narrow (8 mm, 12 mm) | various | 2 × €30 |
+| SDR for ADS-B/FLARM | RTL-SDR Blog V4 (+ antennas) | 2 × €45 |
+| Audio | USB audio adapter, intercom cable, ground-loop isolator | €65 |
 
-Damit lässt sich die komplette Pipeline entwickeln und am Boden testen, für rund 150–250 €.
+This is enough to develop and ground-test the whole pipeline for about €150–250.
 
-## Phase 2 – Flugsystem
+## Phase 2 – flight system
 
-| Komponente | Beispiel | Hinweis |
+| Component | Example | Note |
 |---|---|---|
-| Rechner | NVIDIA Jetson Orin NX 16 GB (Carrier mit 9–20 V Eingang) | 15–40 W je nach Modus |
-| Kameras | 3 × GMSL2, z. B. Basler ace 2 a2A3536-37mgm (IMX676, 12,5 MP, mono) | Versorgung über Koax (PoC) |
-| Deserializer | GMSL2-Board für bis zu 4 Kameras (z. B. Forecr DSADDON-GMSL-NX) | |
-| Kabel | FAKRA-Koax, 3 m | |
-| IMU | Adafruit BNO085 | über USB-Mikrocontroller |
-| GNSS | u-blox M10 | eigene Position für ADS-B-Fusion |
-| Speicher | NVMe 1 TB | Aufzeichnung |
-| Gehäuse | Alu mit Lüfter | Cockpit wird im Sommer heiß |
+| Computer | NVIDIA Jetson Orin NX 16 GB (carrier with 9–20 V input) | 15–40 W depending on mode |
+| Cameras | 3 × GMSL2, e.g. Basler ace 2 a2A3536-37mgm (IMX676, 12.5 MP, mono) | powered over coax (PoC) |
+| Deserializer | GMSL2 board for up to 4 cameras (e.g. Forecr DSADDON-GMSL-NX) | |
+| Cables | FAKRA coax, 3 m | |
+| IMU | Adafruit BNO085 | via USB microcontroller |
+| GNSS | u-blox M10 | own position for ADS-B fusion |
+| Storage | NVMe 1 TB | recording |
+| Enclosure | aluminium with fan | cockpits get hot in summer |
 
-**Warum GMSL2?** MIPI-Kabel funktionieren nur auf ~30 cm. Kameras an verschiedenen Stellen im
-Cockpit brauchen lange, störfeste Leitungen – GMSL2 überträgt Bild und Strom über ein Koaxkabel.
+**Why GMSL2?** MIPI cables only work up to ~30 cm. Cameras at different places in the cockpit need
+long, interference-resistant cables – GMSL2 carries video and power over one coax cable.
 
-**Warum monochrom?** Ein Mono-Sensor hat ohne Farbfilter mehr Licht pro Pixel und mehr effektive
-Auflösung – beides zählt bei Zielen von wenigen Pixeln mehr als Farbe.
+**Why monochrome?** Without a colour filter array a mono sensor gets more light per pixel and more
+effective resolution – both matter more than colour for targets of a few pixels.
 
-**Global Shutter vs. Rolling Shutter:** Global Shutter vermeidet Propeller-Artefakte und
-Vibrationsverzerrungen, ist bei hoher Auflösung aber teuer. Rolling Shutter mit kurzer Belichtung
-funktioniert in der Praxis; die Propellerartefakte werden maskiert bzw. vom Tracker überbrückt.
+**Global vs. rolling shutter:** global shutter avoids propeller artefacts and vibration distortion
+but is expensive at high resolution. Rolling shutter with a short exposure works in practice;
+propeller artefacts are masked or bridged by the tracker.
 
-## Stromversorgung (14-V-Bordnetz)
+## Power supply (14 V aircraft bus)
 
-* Bordnetz real 12–14,5 V, beim Anlassen kurz unter 9 V, Spitzen beim Schalten großer Verbraucher.
-* **Immer über einen DC/DC-Wandler** mit weitem Eingangsbereich (9–36 V), isoliert, mit EMV-Filter.
-  Er liefert stabile 12 V bzw. 19 V und passt auch für 28-V-Flugzeuge.
-* Leistungsbedarf gesamt ca. 40–60 W → 3–4,5 A bei 14 V.
-* Anschluss über eine Bordsteckdose mit ausreichender Absicherung hält das Gerät portabel.
-  Eine feste Verkabelung am Bus ist eine Änderung am Luftfahrzeug.
-* Für erste Testflüge: LiFePO4-Akku (12 V) – komplett getrennt vom Bordnetz.
+* The bus is really 12–14.5 V, briefly below 9 V while cranking, with spikes when large loads switch.
+* **Always use a DC/DC converter** with a wide input range (9–36 V), isolated, with an EMC filter.
+  It provides a stable 12 V or 19 V and also suits 28 V aircraft.
+* Total power ~40–60 W → 3–4.5 A at 14 V.
+* Connecting via a sufficiently fused cabin power socket keeps the device portable. A fixed
+  connection to the bus is a modification of the aircraft.
+* For the first test flights: a LiFePO4 battery (12 V) – completely independent of the aircraft bus.
 
-## EMV
+## EMC
 
-Vor dem ersten Flug am Boden bei laufendem Motor prüfen:
+Before the first flight, check on the ground with the engine running:
 
-* COM: Rauschen/Pfeifen auf mehreren Frequenzen, Squelch-Öffnen?
-* NAV/GPS: Signalverlust, Flaggen?
-* Kompass: Ablenkung durch Gehäuse und Kabel?
+* COM: noise/whistling on several frequencies, squelch opening?
+* NAV/GPS: signal loss, flags?
+* Compass: deviation caused by the enclosure and cables?
 
-Typische Störquellen: Schaltregler des Jetson und des Wandlers, GMSL-Leitungen, USB 3.
-Gegenmittel: Ferrite, kurze Leitungen, Abstand zu Antennenkabeln, metallisches Gehäuse.
+Typical sources: switching regulators of the Jetson and the converter, GMSL cables, USB 3.
+Remedies: ferrites, short cables, distance from antenna cables, metal enclosure.
