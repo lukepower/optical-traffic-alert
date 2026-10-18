@@ -1,7 +1,7 @@
 # Training the classifier
 
 The classifier (stage 2) decides for each candidate crop: **aircraft**, **bird** or **background**.
-Training runs on a machine with an NVIDIA GPU; the laptop only runs the finished model.
+Training runs on a desktop with a GPU (NVIDIA or AMD Radeon); the laptop only runs the finished model.
 
 ## Overview
 
@@ -68,7 +68,20 @@ Double-click `tools\train_windows.bat`. It
 4. waits until `data\crops\READY` exists (so it can be started while crops are still downloading),
 5. trains and exports `models\classifier.xml/.bin`.
 
-Everything is logged to `data\train_windows.log`. Options: `tools\train_windows.bat -Epochs 60`.
+Everything is logged to `data\train_windows.log`. Options: `tools\train_windows.bat -Epochs 60`,
+`-Gpu nvidia|amd|cpu` (default: auto-detect), `-AllowCpu` (fall back to CPU training if no GPU works).
+
+**GPU backends**
+
+| GPU | PyTorch build | Requirements |
+|---|---|---|
+| NVIDIA | CUDA 12.6 from download.pytorch.org | current NVIDIA driver |
+| AMD Radeon RX 7000 / 9000 | ROCm 7.2.1 for Windows from repo.radeon.com | Python 3.12, AMD Software: Adrenalin Edition 26.2.2 or newer |
+| none | CPU | slower; fine for the small 64×64 classifier (roughly an hour) |
+
+ROCm exposes the Radeon card through PyTorch's `cuda` API, so Ultralytics uses `--device 0` for both
+vendors. AMD's Windows support matrix lists the RDNA 3 (gfx110x) and RDNA 4 cards; see
+[AMD's documentation](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html).
 
 ### Manually
 
