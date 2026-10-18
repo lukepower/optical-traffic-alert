@@ -14,10 +14,11 @@ from ota.recorder.upload import (COMPLETE_FILE, SessionUploader, UploadConfig, c
 
 @pytest.fixture(scope="module")
 def s3():
-    srv = moto_server.ThreadedMotoServer(port=0, verbose=False)
+    # bind to 127.0.0.1 explicitly: Windows cannot connect to 0.0.0.0
+    srv = moto_server.ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
     srv.start()
-    host, port = srv.get_host_and_port()
-    cfg = UploadConfig(endpoint=f"http://{host}:{port}", bucket="ota-test", key_id="k", secret="s",
+    _, port = srv.get_host_and_port()
+    cfg = UploadConfig(endpoint=f"http://127.0.0.1:{port}", bucket="ota-test", key_id="k", secret="s",
                        region="us-east-1", prefix="club-a")
     cfg.client().create_bucket(Bucket="ota-test")
     yield cfg
