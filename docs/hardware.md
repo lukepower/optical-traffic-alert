@@ -8,12 +8,13 @@ The full bill of materials with prices (October 2026, EUR) is in
 | Component | Example | approx. price |
 |---|---|---|
 | Laptop | existing (Intel Iris Xe is enough) | – |
-| USB camera | Waveshare IMX678 8MP USB Camera (A) | €60 |
-| M12 lenses, narrow (8 mm, 12 mm) | various | 2 × €30 |
-| SDR for ADS-B/FLARM | RTL-SDR Blog V4 (+ antennas) | 2 × €45 |
+| USB camera | **in use:** Svpro 4K USB 3.0 camera, Sony IMX415, YUYV, CS-mount 5–50 mm zoom (Amazon B0CZDHVYLM) | €193 |
+| SDR for ADS-B | **in use:** Nooelec NESDR SMArt v5 (RTL2832U + R820T2, 0.5 ppm TCXO, 3 antennas); RTL-SDR Blog V4 is equivalent | €58 |
+| Second SDR for FLARM/OGN (868 MHz) | later | ~€50 |
 | Audio | USB audio adapter, intercom cable, ground-loop isolator | €65 |
 
-This is enough to develop and ground-test the whole pipeline for about €150–250.
+This is enough to develop and ground-test the whole pipeline. The zoom lens is for finding the best
+field of view on the ground; for flight a fixed 6–8 mm lens is needed (vibration).
 
 ## Camera requirements
 
