@@ -15,6 +15,7 @@ nano model is tiny and runs comfortably on an Intel Iris Xe via OpenVINO.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -28,9 +29,20 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--device", default="0", help="GPU index, or 'cpu'")
     ap.add_argument("--out", default="models")
+    ap.add_argument("--no-miopen", action="store_true",
+                    help="disable MIOpen on ROCm (automatic on Windows)")
     args = ap.parse_args()
 
+    import torch
     from ultralytics import YOLO  # pip install -e .[train]
+
+    # AMD ROCm on Windows: MIOpen compiles some kernels (e.g. batch norm) at
+    # runtime with hipRTC, which currently fails there ("'type_traits' file not
+    # found"). Disabling the cuDNN/MIOpen backend makes PyTorch use its native
+    # kernels instead - a bit slower, irrelevant for this tiny model.
+    if getattr(torch.version, "hip", None) and (os.name == "nt" or args.no_miopen):
+        torch.backends.cudnn.enabled = False
+        print("ROCm detected: MIOpen disabled, using native PyTorch kernels")
 
     model = YOLO(args.model)
     model.train(data=args.data, imgsz=args.imgsz, epochs=args.epochs, batch=args.batch,
