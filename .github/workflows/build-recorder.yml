@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
     paths:
       - "src/**"
+      - "tests/**"
       - "packaging/**"
       - "pyproject.toml"
       - ".github/workflows/build-recorder.yml"
