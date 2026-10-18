@@ -35,6 +35,7 @@ import csv
 import json
 import logging
 import math
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -202,8 +203,13 @@ class SessionEvaluator:
         self.mode = self.meta.get("mode", "ground")
         self.targets, self.own = load_traffic(self.dir / "traffic.jsonl", self.qnh)
         self.stamps = load_timestamps(self.dir / cam.get("timestamps", "camera/cam0.timestamps.csv"))
-        self.segments = cam.get("segments") or sorted(
-            p.name for p in (self.dir / "camera").glob("cam0_*.*") if p.suffix != ".csv")
+        if cam.get("segment_files"):
+            self.segment_files = {int(k): v for k, v in cam["segment_files"].items()}
+        elif cam.get("segments"):
+            self.segment_files = dict(enumerate(cam["segments"]))
+        else:
+            self.segment_files = dict(enumerate(sorted(
+                p.name for p in (self.dir / "camera").glob("cam0_*.*") if p.suffix != ".csv")))
         self.frames: list[FrameData] = []
         self.crops: dict[int, list[tuple[float, np.ndarray]]] = defaultdict(list)
         self.track_points: dict[int, list[tuple[float, float, float, float]]] = defaultdict(list)
@@ -235,59 +241,87 @@ class SessionEvaluator:
 
     # -- pass 1: run the detector over the video --
 
-    def process_video(self, progress=None) -> None:
-        by_seg: dict[int, list[tuple[int, float]]] = defaultdict(list)
-        for seg, fr, tw in self.stamps:
-            by_seg[seg].append((fr, tw))
-        pipe = None
+    def iter_frames(self):
+        """Yield (global index, segment, frame in segment, t_wall, image) in time order.
+
+        A smart-mode session has many short chunk files plus an idle stream that
+        overlaps them in time; frames are read from whichever file holds the next
+        timestamp. A frame stored twice (idle stream and kept chunk) is used once."""
+        rows = sorted(self.stamps, key=lambda r: r[2])
+        last_needed: dict[int, int] = {}
+        for seg, fr, _ in rows:
+            last_needed[seg] = max(fr, last_needed.get(seg, -1))
+        caps: dict[int, list] = {}  # seg -> [capture, next frame index]
+        prev_t = None
         g = 0
-        total = len(self.stamps)
-        for seg, entries in sorted(by_seg.items()):
-            if seg >= len(self.segments):
-                log.warning("segment %d has timestamps but no video file", seg)
-                continue
-            path = self.dir / "camera" / self.segments[seg]
-            cap = cv2.VideoCapture(str(path))
-            if not cap.isOpened():
-                raise FileNotFoundError(path)
-            stamps = dict(entries)
-            fi = 0
-            while True:
-                ok, img = cap.read()
+        try:
+            for seg, fr, tw in rows:
+                if prev_t is not None and abs(tw - prev_t) < 1e-3:
+                    continue  # duplicate of the previous frame (idle + chunk)
+                if seg not in self.segment_files:
+                    continue  # chunk was discarded
+                c = caps.get(seg)
+                if c is None:
+                    path = self.dir / "camera" / self.segment_files[seg]
+                    cap = cv2.VideoCapture(str(path))
+                    if not cap.isOpened():
+                        log.warning("cannot open %s", path)
+                        self.segment_files.pop(seg)
+                        continue
+                    c = caps[seg] = [cap, 0]
+                while c[1] < fr:
+                    c[0].grab()
+                    c[1] += 1
+                ok, img = c[0].read()
+                c[1] += 1
+                if fr >= last_needed[seg]:
+                    c[0].release()
+                    caps.pop(seg)
                 if not ok:
-                    break
-                tw = stamps.get(fi)
-                cur = fi
-                fi += 1
-                if tw is None or g % self.stride:
-                    g += 1
                     continue
-                if pipe is None:
-                    self.height, self.width = img.shape[:2]
-                    cam = CameraConfig(name="cam0", width=self.width, height=self.height,
-                                       hfov_deg=self.hfov, yaw_deg=self.heading,
-                                       pitch_deg=self.pitch, roll_deg=self.roll)
-                    pipe = CameraPipeline(self.cfg, cam, self.width, self.height)
-                    self.t0 = tw
-                res = pipe.process(Frame("cam0", g, tw - self.t0, img))
-                dets = [Det(c.x, c.y, c.size, c.score) for c in res.candidates]
-                for tr in pipe.tracker.confirmed():
-                    p = tr.history[-1]
-                    dets.append(Det(p.x, p.y, p.size, 1.0, track=tr.id))
-                    self.track_points[tr.id].append((tw, p.x, p.y, p.size))
-                    if self.save_crops and len(self.track_points[tr.id]) % 5 == 1 \
-                            and len(self.crops[tr.id]) < 200:
-                        from .detection.candidates import Candidate
-                        c = Candidate(p.x, p.y, p.size, p.size, p.size ** 2, p.contrast, "dark")
-                        self.crops[tr.id].append((tw, crop_candidate(img, c, 64).copy()))
-                sky, shape = _pack_sky(pipe.detector._sky)
-                self.frames.append(FrameData(g, seg, cur, tw, dets, sky, shape))
+                prev_t = tw
+                yield g, seg, fr, tw, img
                 g += 1
-                if progress and g % 50 == 0:
-                    progress(g, total)
-                if self.max_frames and len(self.frames) >= self.max_frames:
-                    break
-            cap.release()
+        finally:
+            for c in caps.values():
+                c[0].release()
+
+    def process_video(self, progress=None) -> None:
+        from .tracking import Tracker
+        pipe = None
+        total = len(self.stamps)
+        prev_t = None
+        for g, seg, fr, tw, img in self.iter_frames():
+            if g % self.stride:
+                continue
+            if pipe is None:
+                self.height, self.width = img.shape[:2]
+                cam = CameraConfig(name="cam0", width=self.width, height=self.height,
+                                   hfov_deg=self.hfov, yaw_deg=self.heading,
+                                   pitch_deg=self.pitch, roll_deg=self.roll)
+                pipe = CameraPipeline(self.cfg, cam, self.width, self.height)
+                self.t0 = tw
+            elif tw - prev_t > 2.0:
+                # gap (discarded chunk or idle stream): tracks cannot continue across it
+                old = pipe.tracker
+                pipe.tracker = Tracker(self.cfg.tracker, "cam0")
+                pipe.tracker._ids = old._ids  # keep track ids unique over the session
+            prev_t = tw
+            res = pipe.process(Frame("cam0", g, tw - self.t0, img))
+            dets = [Det(c.x, c.y, c.size, c.score) for c in res.candidates]
+            for tr in pipe.tracker.confirmed():
+                p = tr.history[-1]
+                dets.append(Det(p.x, p.y, p.size, 1.0, track=tr.id))
+                self.track_points[tr.id].append((tw, p.x, p.y, p.size))
+                if self.save_crops and len(self.track_points[tr.id]) % 5 == 1 \
+                        and len(self.crops[tr.id]) < 200:
+                    from .detection.candidates import Candidate
+                    c = Candidate(p.x, p.y, p.size, p.size, p.size ** 2, p.contrast, "dark")
+                    self.crops[tr.id].append((tw, crop_candidate(img, c, 64).copy()))
+            sky, shape = _pack_sky(pipe.detector._sky)
+            self.frames.append(FrameData(g, seg, fr, tw, dets, sky, shape))
+            if progress and g % 50 == 0:
+                progress(g, total)
             if self.max_frames and len(self.frames) >= self.max_frames:
                 break
 
@@ -526,35 +560,28 @@ class SessionEvaluator:
         size = (int(self.width * scale), int(self.height * scale))
         fps = float((self.meta["camera"].get("requested") or {}).get("fps") or 10) / self.stride
         writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
-        g = 0
-        for seg, name in enumerate(self.segments):
-            cap = cv2.VideoCapture(str(self.dir / "camera" / name))
-            while True:
-                ok, img = cap.read()
-                if not ok:
-                    break
-                fd = by_frame.get(g)
-                g += 1
-                if fd is None:
-                    continue
-                for d in fd.dets:
-                    # green: track of a cooperative aircraft, magenta: track without one
-                    col = ((0, 200, 0) if d.track in self.track_target else (255, 0, 255)) \
-                        if d.track else (160, 160, 160)
-                    r = 14 if d.track else 6
-                    cv2.rectangle(img, (int(d.u - r), int(d.v - r)), (int(d.u + r), int(d.v + r)), col, 2)
-                for r in rows_by_frame.get(fd.index, []):
-                    tt = self.targets[r["key"]]
-                    col = (0, 255, 255) if r["track"] else (0, 140, 255)
-                    rad = max(10, int(self.gate_deg / model.deg_per_px))
-                    cv2.circle(img, (int(r["u"]), int(r["v"])), rad, col, 2)
-                    label = f"{tt.callsign or r['key']} {r['range_m'] / 1000:.1f} km"
-                    cv2.putText(img, label, (int(r["u"]) + rad + 4, int(r["v"])),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, col, 2)
-                cv2.putText(img, f"{fd.t:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
-                            (255, 255, 255), 2)
-                writer.write(cv2.resize(img, size, interpolation=cv2.INTER_AREA) if scale < 1 else img)
-            cap.release()
+        for g, seg, fr, tw, img in self.iter_frames():
+            fd = by_frame.get(g)
+            if fd is None:
+                continue
+            for d in fd.dets:
+                # green: track of a cooperative aircraft, magenta: track without one
+                col = ((0, 200, 0) if d.track in self.track_target else (255, 0, 255)) \
+                    if d.track else (160, 160, 160)
+                r = 14 if d.track else 6
+                cv2.rectangle(img, (int(d.u - r), int(d.v - r)), (int(d.u + r), int(d.v + r)), col, 2)
+            for r in rows_by_frame.get(fd.index, []):
+                tt = self.targets[r["key"]]
+                col = (0, 255, 255) if r["track"] else (0, 140, 255)
+                rad = max(10, int(self.gate_deg / model.deg_per_px))
+                cv2.circle(img, (int(r["u"]), int(r["v"])), rad, col, 2)
+                label = f"{tt.callsign or r['key']} {r['range_m'] / 1000:.1f} km"
+                cv2.putText(img, label, (int(r["u"]) + rad + 4, int(r["v"])),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, col, 2)
+            stamp = time.strftime("%H:%M:%S", time.gmtime(fd.t))
+            cv2.putText(img, f"{stamp}Z  +{fd.t - self.t0:.1f}s", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+            writer.write(cv2.resize(img, size, interpolation=cv2.INTER_AREA) if scale < 1 else img)
         writer.release()
 
 

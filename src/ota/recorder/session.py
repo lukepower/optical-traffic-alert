@@ -6,8 +6,9 @@ everything the evaluation (``ota evaluate``) needs::
 
     20261020-074512Z_LIPB/
       session.json              settings, station, camera geometry, statistics
-      camera/cam0_000.avi       video (near-lossless MJPEG), split into ~1.8 GB segments
-      camera/cam0_001.avi
+      camera/cam0_0000.avi      video (near-lossless MJPEG); 10 s chunks in smart mode,
+      camera/cam0_0003.avi      ~1.8 GB segments in 'all' mode
+      camera/cam0_idle_0001.avi smart mode: one frame every few seconds
       camera/cam0.timestamps.csv  segment, frame, t_wall (UTC epoch s), t_rel
       traffic.jsonl             one normalised position report per line (all sources)
       raw/adsb_sbs.txt          raw input lines with receive time, for re-processing
@@ -26,6 +27,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import math
 import os
 import platform
 import queue
@@ -91,6 +93,14 @@ class SessionSettings:
     qnh_hpa: float = 1013.25
     notes: str = ""
     output_dir: str = str(Path.home() / "OTA-Sessions")
+    # smart recording (see smart.py): full rate only around traffic / motion
+    record_mode: str = "smart"      # smart | all
+    motion_trigger: bool = True
+    trigger_radius_km: float = 15.0
+    chunk_s: float = 10.0
+    pre_s: float = 20.0
+    post_s: float = 20.0
+    idle_interval_s: float = 3.0
     segment_mb: int = 1800
     min_free_gb: float = 3.0
     language: str = "de"
@@ -130,34 +140,74 @@ class CameraStatus:
     height: int = 0
     format: str = ""
     frames: int = 0
-    written: int = 0
+    written: int = 0           # frames written to disk (kept or still pending)
     dropped: int = 0
     fps: float = 0.0
-    segment: int = 0
-    bytes: int = 0
+    bytes: int = 0             # size of the kept video files
+    kept_s: float = 0.0        # smart mode: seconds of full-rate video kept ...
+    discarded_s: float = 0.0   # ... and deleted
+    idle_frames: int = 0       # smart mode: frames in the idle stream
     sharpness: float = 0.0     # variance of the Laplacian in the image centre (focus aid)
     brightness: float = 0.0    # mean grey value 0..255
     clipped_pct: float = 0.0   # share of saturated pixels (exposure aid)
     error: str = ""
 
 
+class _Stream:
+    """One open video file plus its timestamp rows."""
+
+    def __init__(self, sid: int, path: Path, writer, start: float):
+        self.sid, self.path, self.writer = sid, path, writer
+        self.start = self.end = start
+        self.rows: list[str] = []
+        self.frames = 0
+
+    def write(self, img: np.ndarray, t_wall: float, t_rel: float) -> str:
+        self.writer.write(img)
+        row = f"{self.sid},{self.frames},{t_wall:.4f},{t_rel:.4f}\n"
+        self.frames += 1
+        self.end = t_wall
+        return row
+
+    def size(self) -> int:
+        return self.path.stat().st_size if self.path.exists() else 0
+
+    def close(self) -> None:
+        if self.writer is not None:
+            self.writer.release()
+            self.writer = None
+
+
 class CameraRecorder:
     """Capture thread -> queue -> writer thread. With ``out_dir=None`` it only previews.
 
     Capture and encoding run in separate threads so a slow disk or encoder never
-    stalls the camera; if the queue is full the frame is dropped and counted."""
+    stalls the camera; if the queue is full the frame is dropped and counted.
 
-    def __init__(self, s: SessionSettings, out_dir: Path | None, name: str = "cam0"):
+    ``record_mode='all'`` keeps everything (files split at ``segment_mb``).
+    ``record_mode='smart'`` writes 10 s chunks and keeps only those near a
+    trigger, plus a low-rate idle stream - see ``smart.py``."""
+
+    def __init__(self, s: SessionSettings, out_dir: Path | None, name: str = "cam0",
+                 triggers=None):
+        from .smart import TriggerLog
         self.s = s
         self.out_dir = out_dir
         self.name = name
+        self.smart = out_dir is not None and s.record_mode == "smart"
+        self.triggers = triggers or TriggerLog()
+        self.motion = None
         self.status = CameraStatus()
         self.preview: np.ndarray | None = None   # small BGR image for the GUI
         self._stop = threading.Event()
         self._q: queue.Queue = queue.Queue(maxsize=max(4, int(s.fps * 2)))
         self._threads: list[threading.Thread] = []
         self.cap = None
-        self.segments: list[str] = []
+        self.segment_files: dict[int, str] = {}  # segment id -> file name (kept files only)
+
+    @property
+    def segments(self) -> list[str]:
+        return [self.segment_files[k] for k in sorted(self.segment_files)]
 
     def start(self) -> "CameraRecorder":
         from ..sources import fourcc_str
@@ -169,6 +219,9 @@ class CameraRecorder:
         st = self.status
         st.open, st.height, st.width = True, img.shape[0], img.shape[1]
         st.format = fourcc_str(self.cap.get(cv2.CAP_PROP_FOURCC)) or "?"
+        if self.smart and self.s.motion_trigger:
+            from .smart import MotionTrigger
+            self.motion = MotionTrigger(self.triggers, st.width, st.height).start()
         self._threads = [threading.Thread(target=self._capture, name="cam-capture", daemon=True)]
         if self.out_dir is not None:
             self._threads.append(threading.Thread(target=self._write, name="cam-writer",
@@ -180,7 +233,9 @@ class CameraRecorder:
     def stop(self) -> None:
         self._stop.set()
         for t in self._threads:
-            t.join(timeout=10)
+            t.join(timeout=30)
+        if self.motion:
+            self.motion.stop()
         if self.cap is not None:
             self.cap.release()
         self.status.open = False
@@ -207,6 +262,8 @@ class CameraRecorder:
             n_rate += 1
             if now - t_rate >= 1.0:
                 st.fps, n_rate, t_rate = n_rate / (now - t_rate), 0, now
+            if self.motion:
+                self.motion.offer(wall0 + t_rel, img)
             if self.out_dir is not None:
                 try:
                     self._q.put_nowait((st.frames - 1, wall0 + t_rel, t_rel, img))
@@ -230,48 +287,118 @@ class CameraRecorder:
         st.brightness = float(small.mean())
         st.clipped_pct = float((small >= 250).mean() * 100)
 
+    # -- writer --
+
     def _write(self) -> None:
-        st = self.status
+        s, st = self.s, self.status
         cam_dir = self.out_dir / "camera"
         cam_dir.mkdir(parents=True, exist_ok=True)
         stamps = open(cam_dir / f"{self.name}.timestamps.csv", "w", encoding="utf-8")
         stamps.write("segment,frame,t_wall,t_rel\n")
-        writer, path, seg_frame = None, None, 0
-        limit = self.s.segment_mb * 1024 * 1024
-        closed_bytes = 0
+        limit = s.segment_mb * 1024 * 1024
+        next_id = 0
+        kept_bytes = 0
+        chunk: _Stream | None = None
+        idle: _Stream | None = None
+        pending: list[_Stream] = []
+        last_idle = -math.inf
+        first_t: float | None = None
+
+        def open_stream(prefix: str, t: float, img: np.ndarray, fps: float) -> _Stream:
+            nonlocal next_id
+            sid = next_id
+            next_id += 1
+            w, p = open_writer(cam_dir / f"{self.name}_{prefix}{sid:04d}", s.codec, fps,
+                               (img.shape[1], img.shape[0]))
+            return _Stream(sid, p, w, t)
+
+        def keep(stream: _Stream) -> None:
+            nonlocal kept_bytes
+            stream.close()
+            self.segment_files[stream.sid] = stream.path.name
+            kept_bytes += stream.size()
+            if stream.rows:
+                stamps.writelines(stream.rows)
+                stream.rows = []
+                stamps.flush()
+
+        def decide(now: float, final: bool = False) -> None:
+            while pending and (final or pending[0].end + s.pre_s <= now):
+                c = pending.pop(0)
+                c.close()
+                dur = c.end - c.start + 1.0 / max(s.fps, 1e-3)
+                if self.triggers.any_between(c.start - s.post_s, c.end + s.pre_s):
+                    keep(c)
+                    st.kept_s += dur
+                else:
+                    try:
+                        c.path.unlink()
+                    except OSError:  # pragma: no cover
+                        log.warning("cannot delete %s", c.path)
+                    st.discarded_s += dur
+
         try:
             while True:
                 item = self._q.get()
                 if item is None:
                     break
-                idx, t_wall, t_rel, img = item
-                if writer is None:
-                    path_base = cam_dir / f"{self.name}_{st.segment:03d}"
-                    writer, path = open_writer(path_base, self.s.codec, self.s.fps,
-                                               (img.shape[1], img.shape[0]))
-                    self.segments.append(path.name)
-                    seg_frame = 0
-                writer.write(img)
-                stamps.write(f"{st.segment},{seg_frame},{t_wall:.4f},{t_rel:.4f}\n")
-                seg_frame += 1
+                _, t_wall, t_rel, img = item
+                if first_t is None:
+                    first_t = t_wall
+                # 1. idle stream (smart mode): one frame every idle_interval_s, always kept
+                if self.smart and t_wall - last_idle >= s.idle_interval_s:
+                    if idle is None or (st.idle_frames % 50 == 0 and idle.size() >= limit):
+                        if idle is not None:
+                            keep(idle)
+                        idle = open_stream("idle_", t_wall, img, max(1.0, 1.0 / s.idle_interval_s))
+                        self.segment_files[idle.sid] = idle.path.name
+                    stamps.write(idle.write(img, t_wall, t_rel))
+                    st.idle_frames += 1
+                    last_idle = t_wall
+                # 2. main stream
+                roll = chunk is None
+                if chunk is not None and self.smart and t_wall - chunk.start >= s.chunk_s:
+                    roll = True
+                if chunk is not None and chunk.frames % 30 == 29 and chunk.size() >= limit:
+                    roll = True
+                if roll:
+                    if chunk is not None:
+                        chunk.close()
+                        if self.smart:
+                            pending.append(chunk)
+                        else:
+                            keep(chunk)
+                    chunk = open_stream("", t_wall, img, s.fps)
+                    if not self.smart:
+                        self.segment_files[chunk.sid] = chunk.path.name
+                row = chunk.write(img, t_wall, t_rel)
+                if self.smart:
+                    chunk.rows.append(row)
+                    decide(t_wall)
+                else:
+                    stamps.write(row)
                 st.written += 1
                 if st.written % 30 == 0:
                     stamps.flush()
-                    cur = path.stat().st_size if path.exists() else 0
-                    st.bytes = closed_bytes + cur
-                    if cur >= limit:
-                        writer.release()
-                        closed_bytes += path.stat().st_size
-                        writer = None
-                        st.segment += 1
+                    st.bytes = kept_bytes + (0 if self.smart else chunk.size())
         except Exception as e:  # disk full, codec error
             st.error = str(e)
             log.exception("camera writer failed")
             self._stop.set()
         finally:
-            if writer is not None:
-                writer.release()
-                st.bytes = closed_bytes + (path.stat().st_size if path.exists() else 0)
+            if chunk is not None:
+                if self.smart:
+                    chunk.close()
+                    pending.append(chunk)
+                else:
+                    keep(chunk)
+            decide(math.inf, final=True)
+            if idle is not None:
+                keep(idle)
+            if not self.smart and first_t is not None and chunk is not None:
+                st.kept_s = chunk.end - first_t
+            st.bytes = sum((cam_dir / f).stat().st_size for f in self.segment_files.values()
+                           if (cam_dir / f).exists())
             stamps.close()
 
 
@@ -375,6 +502,11 @@ class SessionRecorder:
         self._dump1090: subprocess.Popen | None = None
         self._log_handler: logging.Handler | None = None
         self.error = ""
+        from .smart import TriggerLog
+        self.triggers = TriggerLog()
+        self.traffic_hits: list[str] = []
+        self._trig_stop = threading.Event()
+        self._trig_thread: threading.Thread | None = None
 
     # -- lifecycle --
 
@@ -397,12 +529,16 @@ class SessionRecorder:
         self._write_meta()
         try:
             if s.camera_enabled:
-                self.camera = CameraRecorder(s, self.dir).start()
+                self.camera = CameraRecorder(s, self.dir, triggers=self.triggers).start()
                 log.info("camera %s: %dx%d %s", s.camera_source, self.camera.status.width,
                          self.camera.status.height, self.camera.status.format)
             self._start_dump1090()
             self.logger = TrafficLogger(self.dir)
             self.feeds = [f.start() for f in make_feeds(s, self.logger)]
+            if self.camera and self.camera.smart:
+                self._trig_thread = threading.Thread(target=self._traffic_trigger_loop,
+                                                     name="traffic-trigger", daemon=True)
+                self._trig_thread.start()
         except Exception:
             self.stop()
             raise
@@ -411,6 +547,9 @@ class SessionRecorder:
         return self.dir
 
     def stop(self) -> Path | None:
+        self._trig_stop.set()
+        if self._trig_thread:
+            self._trig_thread.join(timeout=3)
         for f in self.feeds:
             f.stop()
         if self.camera:
@@ -432,6 +571,28 @@ class SessionRecorder:
             self._log_handler.close()
             self._log_handler = None
         return self.dir
+
+    def _traffic_trigger_loop(self) -> None:
+        """Smart mode: mark 'traffic' whenever a cooperative aircraft is near the field of view."""
+        from .smart import traffic_in_view
+        s = self.s
+        st = self.camera.status
+        aspect = st.width / st.height if st.height else 16 / 9
+        while not self._trig_stop.wait(1.0):
+            if s.mode == "aircraft":
+                own = self.logger.table.ownship()
+                if own is None or own.lat is None or own.track_deg is None:
+                    observer, heading = None, 0.0
+                else:
+                    observer = (own.lat, own.lon, own.alt_m if own.alt_m is not None else s.elev_m)
+                    heading = own.track_deg + s.cam_heading_deg
+            else:
+                observer, heading = (s.lat, s.lon, s.elev_m), s.cam_heading_deg
+            hits = traffic_in_view(self.logger.table, observer, heading, s.cam_pitch_deg,
+                                   s.hfov_deg, aspect, s.trigger_radius_km)
+            self.traffic_hits = hits
+            if hits:
+                self.triggers.add(time.time(), "traffic")
 
     def _start_dump1090(self) -> None:
         path = self.s.dump1090_path.strip()
@@ -472,9 +633,14 @@ class SessionRecorder:
                                                     "format": cam.format},
                 "heading_deg": s.cam_heading_deg, "pitch_deg": s.cam_pitch_deg,
                 "roll_deg": s.cam_roll_deg, "hfov_deg": s.hfov_deg,
-                "segments": self.camera.segments if self.camera else [],
+                "segment_files": {str(k): v for k, v in sorted(self.camera.segment_files.items())}
+                if self.camera else {},
                 "timestamps": "camera/cam0.timestamps.csv",
             },
+            "recording": {"mode": s.record_mode, "motion_trigger": s.motion_trigger,
+                          "trigger_radius_km": s.trigger_radius_km, "chunk_s": s.chunk_s,
+                          "pre_s": s.pre_s, "post_s": s.post_s,
+                          "idle_interval_s": s.idle_interval_s},
             "traffic_sources": {
                 "adsb": s.adsb_address if s.adsb_enabled else None,
                 "ogn_online": f"{OGN_SERVER} r={s.ogn_radius_km:.0f}km" if s.ogn_online else None,
@@ -490,7 +656,10 @@ class SessionRecorder:
         if self.camera:
             c = self.camera.status
             d["camera"] = {"frames": c.frames, "written": c.written, "dropped": c.dropped,
-                           "bytes": c.bytes, "segments": len(self.camera.segments)}
+                           "bytes": c.bytes, "files": len(self.camera.segment_files),
+                           "kept_s": round(c.kept_s, 1), "discarded_s": round(c.discarded_s, 1),
+                           "idle_frames": c.idle_frames}
+            d["triggers"] = dict(self.triggers.counts)
         if self.logger:
             d["traffic"] = {"reports": dict(self.logger.table.counts),
                             "aircraft": len(self.logger.keys)}

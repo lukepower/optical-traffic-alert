@@ -57,7 +57,7 @@ def test_session_recorder_with_file_camera_and_adsb(session, tmp_path):
     threading.Thread(target=serve, daemon=True).start()
     st = SessionSettings(output_dir=str(tmp_path), station_name="TEST",
                          camera_source=f"file:{session / 'camera' / 'cam0_000.avi'}", fps=8.0,
-                         adsb_address=f"127.0.0.1:{port}", ogn_online=False)
+                         adsb_address=f"127.0.0.1:{port}", ogn_online=False, record_mode="all")
     rec = SessionRecorder(st)
     folder = rec.start()
     time.sleep(3.0)
@@ -67,7 +67,7 @@ def test_session_recorder_with_file_camera_and_adsb(session, tmp_path):
 
     meta = json.loads((folder / "session.json").read_text())
     assert meta["format"] == "ota-session/1" and meta["ended_utc"]
-    assert meta["camera"]["segments"] == ["cam0_000.avi"]
+    assert meta["camera"]["segment_files"] == {"0": "cam0_0000.avi"}
     assert meta["stats"]["camera"]["written"] >= 15
     assert meta["stats"]["traffic"]["aircraft"] == 1
     stamps = (folder / "camera" / "cam0.timestamps.csv").read_text().splitlines()
@@ -79,3 +79,80 @@ def test_session_recorder_with_file_camera_and_adsb(session, tmp_path):
     assert len(traffic) >= 20 and json.loads(traffic[0])["src"] == "adsb"
     assert (folder / "raw" / "adsb_sbs.txt").exists()
     assert "session" in (folder / "recorder.log").read_text()
+
+
+def test_smart_recording_keeps_only_chunks_near_traffic(session, tmp_path):
+    """Traffic in view only between ~4 and ~6 s: chunks far from it are deleted,
+    the idle stream is kept, and the evaluation can still read the session."""
+    from ota.evaluate import SessionEvaluator
+    from ota.recorder import SessionRecorder, SessionSettings
+
+    lines = [ln.split("\t")[1] for ln in
+             (session / "raw" / "adsb_sbs.txt").read_text().splitlines() if "4CA2D6" in ln]
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    port = srv.getsockname()[1]
+
+    def serve():
+        c, _ = srv.accept()
+        time.sleep(4.0)
+        for ln in lines[:8]:  # ~2 s of the approaching aircraft (in view of a 190 deg camera)
+            c.sendall((ln + "\r\n").encode())
+            time.sleep(0.25)
+        time.sleep(30)
+
+    threading.Thread(target=serve, daemon=True).start()
+    st = SessionSettings(output_dir=str(tmp_path), station_name="SMART",
+                         camera_source=f"file:{session / 'camera' / 'cam0_000.avi'}", fps=8.0,
+                         adsb_address=f"127.0.0.1:{port}", ogn_online=False, record_mode="smart",
+                         motion_trigger=False, chunk_s=2.0, pre_s=2.0, post_s=2.0,
+                         idle_interval_s=1.0, cam_heading_deg=190.0, cam_pitch_deg=3.0,
+                         trigger_radius_km=15.0)
+    rec = SessionRecorder(st)
+    folder = rec.start()
+    time.sleep(25.0)
+    rec.stop()
+    srv.close()
+
+    meta = json.loads((folder / "session.json").read_text())
+    cam = meta["stats"]["camera"]
+    assert meta["stats"]["triggers"].get("traffic", 0) >= 1
+    assert cam["kept_s"] > 3 and cam["discarded_s"] > 3          # some kept, some deleted
+    assert cam["idle_frames"] >= 12
+    files = meta["camera"]["segment_files"]
+    on_disk = sorted(p.name for p in (folder / "camera").glob("*.avi"))
+    assert sorted(files.values()) == on_disk                     # deleted chunks are gone
+    assert any(n.startswith("cam0_idle_") for n in on_disk)
+    rows = (folder / "camera" / "cam0.timestamps.csv").read_text().splitlines()[1:]
+    assert {r.split(",")[0] for r in rows} == set(files)          # no rows of deleted chunks
+
+    ev = SessionEvaluator(folder, save_crops=False)
+    times = [tw for _, _, _, tw, _ in ev.iter_frames()]
+    assert times == sorted(times) and len(times) >= 20
+    assert len(set(times)) == len(times)
+
+
+def test_motion_trigger_ignores_static_specks():
+    import numpy as np
+    from ota.recorder.smart import MotionTrigger, TriggerLog
+    from ota.synth import _draw_aircraft, _sky
+
+    rng = np.random.default_rng(3)
+    bg = _sky(1280, 720, 600, rng)
+    trig = TriggerLog()
+    m = MotionTrigger(trig, 1280, 720)
+    t0 = 1000.0
+    for i in range(8):  # only a static speck: never triggers
+        img = bg.copy()
+        _draw_aircraft(img, 400, 200, 4)
+        m.process(t0 + i * 0.5, np.clip(img, 0, 255).astype(np.uint8))
+    assert not trig.counts
+    for i in range(8):  # a moving target: triggers
+        img = bg.copy()
+        _draw_aircraft(img, 400, 200, 4)
+        _draw_aircraft(img, 700 + 12 * i, 250, 4)
+        m.process(t0 + 10 + i * 0.5, np.clip(img, 0, 255).astype(np.uint8))
+    assert trig.counts.get("motion", 0) >= 1
+    assert trig.any_between(t0 + 10, t0 + 14)
+    assert not trig.any_between(t0, t0 + 4)

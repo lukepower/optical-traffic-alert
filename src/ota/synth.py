@@ -260,7 +260,7 @@ def make_synthetic_session(parent: str | Path, width: int = 1280, height: int = 
                    "actual": {"width": width, "height": height, "format": "synthetic"},
                    "requested": {"fps": fps},
                    "heading_deg": heading + heading_error_deg, "pitch_deg": pitch + pitch_error_deg,
-                   "roll_deg": 0.0, "hfov_deg": hfov, "segments": [vpath.name],
+                   "roll_deg": 0.0, "hfov_deg": hfov, "segment_files": {"0": vpath.name},
                    "timestamps": "camera/cam0.timestamps.csv"},
         "truth": {"heading_deg": heading, "pitch_deg": pitch,
                   "targets": {"icao:4CA2D6": "approach, drawn", "flarm:DDA5BA": "glider, drawn",

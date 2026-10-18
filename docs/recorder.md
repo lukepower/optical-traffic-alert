@@ -67,6 +67,11 @@ camera's field of view are highlighted in yellow.
 * **Tilt up** – how far the camera points above the horizon (0–10°).
 * **Horizontal field of view** – depends on lens and zoom. Measure it once
   ([calibration.md](calibration.md)) or estimate it. The evaluation needs it to within about 2°.
+* **Recording** – *Only with traffic/motion* (default) or *Record everything*, see
+  [Recording mode](#recording-mode-saving-disk-space).
+* **Also on motion in the image** – in the default mode, also record at full rate when something
+  moves in the image, even without any traffic data (gliders without FLARM, paragliders, drones,
+  birds).
 * **Preview** – shows the image and a **sharpness** value. Focus on something far away (mountains,
   clouds) and turn the focus ring until the value is at its maximum. Then do not touch the lens again.
 
@@ -79,6 +84,26 @@ camera's field of view are highlighted in yellow.
   the OGN servers. Needs internet.
 * **FLARM device (NMEA)** – serial port of a FLARM data cable, e.g. `COM4@19200`. Some devices
   also provide the data over Wi-Fi (`192.168.1.1:2000`).
+
+## Recording mode: saving disk space
+
+4K at 15 fps produces 1–2 GB per minute, and most of it shows empty sky. In the default mode
+**Only with traffic/motion** the recorder keeps the full frame rate only when something is going on:
+
+* **Traffic:** an aircraft from ADS-B/FLARM/OGN is within 15 km and in or near the camera's field
+  of view.
+* **Motion:** the detector checks the newest image about twice a second. Something that keeps
+  moving starts a recording too, so aircraft *without* FLARM or transponder are captured.
+  Specks on the lens never move and never trigger.
+
+Each event is kept with about 20 s before and 20 s after it. The video is written in 10-second
+pieces, and pieces without any event are deleted again after about 30 s. In addition, **one frame
+every 3 seconds** is always kept. These frames are cheap and show the system what "nothing there"
+looks like: clouds, birds, reflections.
+
+The status line shows how much of the time was kept and which trigger is active. Depending on
+traffic, this saves 80–90 % of the disk space. Choose **Record everything** for special cases,
+e.g. a short targeted recording of a known overflight.
 
 ## At the airfield – step by step
 
@@ -97,13 +122,15 @@ camera's field of view are highlighted in yellow.
 ## What to hand in
 
 Hand in the **whole session folder** (e.g. `20261020-074512Z_LIPB`) on a USB drive or through a
-cloud share. It is large: 4K at 15 fps produces about 1–2 GB per minute. Please also tell us
+cloud share. With the default recording mode a busy hour typically ends up at 5–20 GB; *Record everything*
+produces 1–2 GB per minute. Please also tell us
 about anything notable (gliders without FLARM, paragliders, drones, birds, weather).
 
 ```
 20261020-074512Z_LIPB/
   session.json                 all settings, station, camera geometry, statistics
-  camera/cam0_000.avi …        video, near-lossless MJPEG, split into ~1.8 GB parts
+  camera/cam0_0003.avi …       video pieces with events (near-lossless MJPEG)
+  camera/cam0_idle_0000.avi    one frame every 3 s
   camera/cam0.timestamps.csv   exact time of every frame
   traffic.jsonl                every received position, one JSON object per line
   raw/*.txt                    raw ADS-B / OGN / FLARM lines with receive time

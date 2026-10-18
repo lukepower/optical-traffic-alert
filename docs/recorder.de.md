@@ -31,6 +31,8 @@ Python oder andere Programme sind nicht nötig.
      Auswertung korrigiert sie), **Neigung** nach oben, **Bildwinkel**.
    * **Verkehrsdaten:** ADS-B `127.0.0.1:30003`, „FLARM/OGN aus dem Internet“ ein, FLARM-Gerät
      falls vorhanden (z. B. `COM4@19200`).
+   * **Aufnahme:** „Nur bei Verkehr/Bewegung“ lassen (spart 80–90 % Speicher). Häkchen bei
+     „Auch bei Bewegung im Bild“ lassen, damit auch Flugzeuge ohne FLARM erfasst werden.
 5. **Vorschau** drücken. Auf etwas weit Entferntes scharf stellen, bis der Wert **Schärfe**
    maximal ist. Ist der Himmel überbelichtet, unter *Belichtung* einen Wert eintragen
    (z. B. `-8`, kleiner = dunkler).
@@ -41,7 +43,9 @@ Python oder andere Programme sind nicht nötig.
 ## Abgeben
 
 Bitte den **ganzen Sitzungsordner** (z. B. `20261020-074512Z_LIPB`) auf USB-Stick oder über
-eine Cloud weitergeben. 4K mit 15 Bildern/s ergibt etwa 1–2 GB pro Minute. Besonderheiten gern
+eine Cloud weitergeben. Im Standardmodus speichert das Programm nur die Abschnitte mit Verkehr
+oder Bewegung (je 20 s davor und danach) und sonst nur ein Bild alle 3 Sekunden. Eine Stunde
+ergibt so meist 5–20 GB statt 60–120 GB. Besonderheiten gern
 dazuschreiben, etwa Segelflieger ohne FLARM, Gleitschirme, Drohnen, Vögel oder Wetter.
 
 ## Datenschutz

@@ -63,6 +63,18 @@ TEXT = {
                      "approximate is fine – corrected during evaluation"),
     "pitch": ("Neigung nach oben (°)", "Inclinazione verso l'alto (°)", "Tilt up (°)"),
     "hfov": ("Bildwinkel horizontal (°)", "Angolo orizzontale (°)", "Horizontal field of view (°)"),
+    "rec_mode": ("Aufnahme", "Registrazione", "Recording"),
+    "rec_smart": ("Nur bei Verkehr/Bewegung (spart Speicher)", "Solo con traffico/movimento (risparmia spazio)",
+                  "Only with traffic/motion (saves space)"),
+    "rec_all": ("Alles aufnehmen", "Registra tutto", "Record everything"),
+    "motion": ("Auch bei Bewegung im Bild (Flugzeuge ohne FLARM)", "Anche con movimento nell'immagine (senza FLARM)",
+               "Also on motion in the image (aircraft without FLARM)"),
+    "kept": ("behalten", "conservato", "kept"),
+    "of": ("von", "di", "of"),
+    "trigger": ("Auslöser", "Attivazione", "Trigger"),
+    "trig_traffic": ("Verkehr", "traffico", "traffic"),
+    "trig_motion": ("Bewegung", "movimento", "motion"),
+    "trig_none": ("–", "–", "–"),
     "preview": ("Vorschau", "Anteprima", "Preview"),
     "preview_stop": ("Vorschau aus", "Anteprima off", "Stop preview"),
     "traffic": ("Verkehrsdaten", "Dati traffico", "Traffic data"),
@@ -281,8 +293,16 @@ class RecorderApp:
                  self.t("heading_hint"))
         self.row(f, 9, self.t("pitch"), self.entry(f, "cam_pitch_deg", s.cam_pitch_deg))
         self.row(f, 10, self.t("hfov"), self.entry(f, "hfov_deg", s.hfov_deg))
+        recm = {"smart": self.t("rec_smart"), "all": self.t("rec_all")}
+        self._recmodes = {v: k for k, v in recm.items()}
+        self.row(f, 11, self.t("rec_mode"), ttk.Combobox(
+            f, values=list(recm.values()), state="readonly", width=30,
+            textvariable=self.var("record_mode", recm.get(s.record_mode, recm["smart"]))))
+        ttk.Checkbutton(f, text=self.t("motion"),
+                        variable=self.var("motion_trigger", s.motion_trigger, tk.BooleanVar)
+                        ).grid(row=12, column=0, columnspan=2, sticky="w", padx=6)
         self.preview_btn = ttk.Button(f, text=self.t("preview"), command=self.toggle_preview)
-        self.preview_btn.grid(row=11, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        self.preview_btn.grid(row=13, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
 
         # -- traffic --
         f = ttk.Frame(left, padding=4)
@@ -372,7 +392,9 @@ class RecorderApp:
                          "pixel_format", "adsb_address", "dump1090_path", "ogn_local_address",
                          "flarm_address"):
                 setattr(s, name, str(v[name]).strip())
-            for name in ("camera_enabled", "adsb_enabled", "ogn_online", "ogn_local", "flarm_enabled"):
+            s.record_mode = self._recmodes.get(v["record_mode"], "smart")
+            for name in ("camera_enabled", "adsb_enabled", "ogn_online", "ogn_local", "flarm_enabled",
+                         "motion_trigger"):
                 setattr(s, name, bool(v[name]))
             s.mode = self._modes.get(v["mode"], "ground")
             fields = {"lat": "lat", "lon": "lon", "elev_m": "elev", "qnh_hpa": "qnh", "fps": "fps",
@@ -557,6 +579,14 @@ class RecorderApp:
                 f"{self.t('frames')} {c.frames}")
         if cam.out_dir is not None:
             line += f" ({c.dropped} {self.t('dropped')}, {c.bytes / 1e9:.2f} GB)"
+        if cam.smart:
+            total = c.kept_s + c.discarded_s
+            pct = 100 * c.kept_s / total if total else 0
+            active = cam.triggers.active(time.time(), 2.0)
+            trig = ", ".join(self.t(f"trig_{a}") for a in active) or self.t("trig_none")
+            kept = (f"{self.t('kept')} {fmt_duration(c.kept_s)} {self.t('of')} "
+                    f"{fmt_duration(total)} ({pct:.0f} %)   ") if total else ""
+            line += f"\n{kept}{self.t('trigger')}: {trig}"
         self.cam_var.set(line + f"\n{self.t('sharpness')} {c.sharpness:6.1f}   "
                                 f"{self.t('brightness')} {c.brightness:5.1f}   "
                                 f"{self.t('clipped')} {c.clipped_pct:4.1f} %")
