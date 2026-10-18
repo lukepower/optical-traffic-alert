@@ -101,6 +101,8 @@ class SessionSettings:
     pre_s: float = 20.0
     post_s: float = 20.0
     idle_interval_s: float = 3.0
+    # hand in: upload code from the project lead (see upload.py)
+    upload_code: str = ""
     segment_mb: int = 1800
     min_free_gb: float = 3.0
     language: str = "de"

@@ -42,8 +42,13 @@ Python oder andere Programme sind nicht nötig.
 
 ## Abgeben
 
-Bitte den **ganzen Sitzungsordner** (z. B. `20261020-074512Z_LIPB`) auf USB-Stick oder über
-eine Cloud weitergeben. Im Standardmodus speichert das Programm nur die Abschnitte mit Verkehr
+Im Reiter **Abgabe** die Aufnahme auswählen und dann:
+
+* **Hochladen** – einmalig den *Upload-Code* vom Projektleiter einfügen. Ein unterbrochener
+  Upload (Laptop zugeklappt, Internet weg) setzt beim nächsten Klick dort fort, wo er aufgehört hat.
+* **Kopieren nach …** – auf einen USB-Stick oder in einen synchronisierten Ordner
+  (Google Drive, OneDrive, Dropbox).
+ Im Standardmodus speichert das Programm nur die Abschnitte mit Verkehr
 oder Bewegung (je 20 s davor und danach) und sonst nur ein Bild alle 3 Sekunden. Eine Stunde
 ergibt so meist 5–20 GB statt 60–120 GB. Besonderheiten gern
 dazuschreiben, etwa Segelflieger ohne FLARM, Gleitschirme, Drohnen, Vögel oder Wetter.

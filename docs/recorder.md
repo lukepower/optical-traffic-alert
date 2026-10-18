@@ -121,8 +121,15 @@ e.g. a short targeted recording of a known overflight.
 
 ## What to hand in
 
-Hand in the **whole session folder** (e.g. `20261020-074512Z_LIPB`) on a USB drive or through a
-cloud share. With the default recording mode a busy hour typically ends up at 5–20 GB; *Record everything*
+Hand in the **whole session folder** (e.g. `20261020-074512Z_LIPB`). The **Hand in** tab lists all
+recordings and offers two ways:
+
+* **Upload** – paste the *upload code* from the project lead once. Then select a recording and
+  press **Upload**. The upload can be interrupted (laptop closed, network gone) and continues where
+  it stopped when you press Upload again. The status shows *uploaded* when the recording is
+  complete on the server.
+* **Copy to …** – copies the folder to a USB stick or into a synced cloud folder (Google Drive,
+  OneDrive, Dropbox desktop app) and checks the copy. With the default recording mode a busy hour typically ends up at 5–20 GB; *Record everything*
 produces 1–2 GB per minute. Please also tell us
 about anything notable (gliders without FLARM, paragliders, drones, birds, weather).
 
@@ -136,6 +143,33 @@ about anything notable (gliders without FLARM, paragliders, drones, birds, weath
   raw/*.txt                    raw ADS-B / OGN / FLARM lines with receive time
   recorder.log
 ```
+
+## For the project lead: setting up uploads
+
+Uploads go to any S3-compatible storage. **Backblaze B2** is recommended because B2 can create a
+key that may only *add* files ([B2 key capabilities](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys)).
+Members cannot read, list or delete anything, so a leaked code exposes no recordings.
+
+1. In B2 create a private bucket, e.g. `ota-recordings`.
+2. Create an application key: *Allow access to bucket* = that bucket, type **Write Only**
+   (capability `writeFiles`). Optionally restrict it to a prefix (e.g. the club name).
+3. Create the code and test it:
+
+   ```powershell
+   ota upload-code --endpoint https://s3.eu-central-003.backblazeb2.com --region eu-central-003 `
+       --bucket ota-recordings --key-id <keyID> --secret <applicationKey> --prefix aeroclub-bz --check
+   ```
+
+4. Send the printed `ota1:…` code to the members, e.g. one code per club.
+
+**Cloudflare R2** works the same way (endpoint `https://<account id>.r2.cloudflarestorage.com`,
+region `auto`). However, R2 tokens always include read access
+([R2 token permissions](https://developers.cloudflare.com/r2/api/tokens/)). Give an R2 code only to
+people who may also see the recordings, or later put a small presigned-URL service in front.
+
+A session is complete on the server when `<prefix>/<session>/_upload_complete.json` exists. Fetch
+the data with any S3 tool, e.g. `rclone copy b2:ota-recordings D:\OTA-Incoming`. For scripted
+uploads there is also `ota upload <session folder> --code ota1:…`.
 
 ## Getting FLARM locally (second SDR stick)
 

@@ -26,6 +26,7 @@ from .. import __version__
 from ..sensors.traffic import look_angles
 from .assets import LOGO_64_PNG_B64
 from .session import CameraRecorder, SessionRecorder, SessionSettings
+from .upload import Progress, SessionUploader, UploadConfig, copy_session, list_sessions
 
 log = logging.getLogger(__name__)
 
@@ -115,11 +116,11 @@ TEXT = {
     "in_view": ("im Bild", "in vista", "in view"),
     "done_title": ("Aufnahme beendet", "Registrazione terminata", "Recording finished"),
     "done_msg": ("Gespeichert in:\n{folder}\n\nDauer {dur}, {frames} Bilder, {ac} Luftfahrzeuge.\n\n"
-                 "Bitte den ganzen Ordner weitergeben.",
+                 "Abgeben im Reiter „Abgabe“ (Hochladen oder Kopieren).",
                  "Salvato in:\n{folder}\n\nDurata {dur}, {frames} fotogrammi, {ac} aeromobili.\n\n"
-                 "Per favore consegnare l'intera cartella.",
+                 "Consegna nella scheda «Consegna» (caricare o copiare).",
                  "Saved in:\n{folder}\n\nDuration {dur}, {frames} frames, {ac} aircraft.\n\n"
-                 "Please hand over the whole folder."),
+                 "Hand it in on the “Hand in” tab (upload or copy)."),
     "error": ("Fehler", "Errore", "Error"),
     "bad_value": ("Ungültiger Wert bei „{field}“", "Valore non valido per «{field}»",
                   "Invalid value for “{field}”"),
@@ -139,6 +140,37 @@ TEXT = {
                    "Nitidezza: mettere a fuoco un oggetto lontano, massimizzare il valore.",
                    "Sharpness: focus on a distant object and maximise the value."),
     "language": ("Sprache", "Lingua", "Language"),
+    "handin": ("Abgabe", "Consegna", "Hand in"),
+    "upload_code": ("Upload-Code", "Codice di upload", "Upload code"),
+    "upload_target": ("Ziel", "Destinazione", "Target"),
+    "not_set": ("nicht eingerichtet – Code vom Projektleiter einfügen",
+                "non configurato – inserire il codice del responsabile",
+                "not set up – paste the code from the project lead"),
+    "bad_code": ("Ungültiger Upload-Code", "Codice di upload non valido", "Invalid upload code"),
+    "sessions": ("Aufnahmen", "Registrazioni", "Recordings"),
+    "col_name": ("Aufnahme", "Registrazione", "Recording"),
+    "col_dur": ("Dauer", "Durata", "Duration"),
+    "col_size": ("GB", "GB", "GB"),
+    "col_state": ("Status", "Stato", "Status"),
+    "st_done": ("hochgeladen", "caricato", "uploaded"),
+    "st_partial": ("teilweise", "parziale", "partial"),
+    "st_running": ("läuft", "in corso", "recording"),
+    "refresh": ("Aktualisieren", "Aggiorna", "Refresh"),
+    "upload": ("Hochladen", "Carica", "Upload"),
+    "copy_to": ("Kopieren nach …", "Copia su …", "Copy to …"),
+    "cancel": ("Abbrechen", "Annulla", "Cancel"),
+    "select_session": ("Bitte eine Aufnahme auswählen.", "Selezionare una registrazione.",
+                       "Please select a recording."),
+    "busy": ("Es läuft bereits eine Übertragung.", "Un trasferimento è già in corso.",
+             "A transfer is already running."),
+    "upload_done": ("Hochgeladen: {name}", "Caricato: {name}", "Uploaded: {name}"),
+    "copy_done": ("Kopiert nach {dest}", "Copiato in {dest}", "Copied to {dest}"),
+    "transfer_failed": ("Übertragung unterbrochen: {err}\nErneut starten setzt dort fort.",
+                        "Trasferimento interrotto: {err}\nRiavviando riprende da lì.",
+                        "Transfer interrupted: {err}\nStarting again resumes where it stopped."),
+    "copy_hint": ("USB-Stick oder einen synchronisierten Ordner (Google Drive, OneDrive, Dropbox) wählen.",
+                  "Scegliere una chiavetta USB o una cartella sincronizzata (Google Drive, OneDrive, Dropbox).",
+                  "Choose a USB stick or a synced folder (Google Drive, OneDrive, Dropbox)."),
     "no_cameras": ("Keine Kamera gefunden", "Nessuna camera trovata", "No camera found"),
 }
 
@@ -341,6 +373,42 @@ class RecorderApp:
         ttk.Combobox(f, values=ports, textvariable=self.var("flarm_address", s.flarm_address),
                      width=16).grid(row=r, column=1, sticky="ew", padx=(0, 6))
 
+        # -- hand in: upload / copy --
+        f = ttk.Frame(left, padding=4)
+        left.add(f, text=self.t("handin"))
+        f.columnconfigure(1, weight=1)
+        code = ttk.Entry(f, textvariable=self.var("upload_code", s.upload_code), show="•", width=30)
+        self.row(f, 0, self.t("upload_code"), code)
+        self.target_var = tk.StringVar(value="")
+        ttk.Label(f, text=self.t("upload_target")).grid(row=1, column=0, sticky="w", padx=(6, 4))
+        ttk.Label(f, textvariable=self.target_var, foreground="#666", wraplength=330).grid(
+            row=1, column=1, sticky="w")
+        self.vars["upload_code"].trace_add("write", lambda *a: self.update_target())
+        self.update_target()
+        ttk.Label(f, text=self.t("sessions"), font=("Segoe UI", 10, "bold")).grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(10, 2))
+        cols = ("name", "dur", "size", "state")
+        self.sess_tree = ttk.Treeview(f, columns=cols, show="headings", height=9, selectmode="browse")
+        for c, w in zip(cols, (210, 70, 60, 90)):
+            self.sess_tree.heading(c, text=self.t(f"col_{c}"))
+            self.sess_tree.column(c, width=w, anchor="w" if c == "name" else "e")
+        self.sess_tree.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=6)
+        f.rowconfigure(3, weight=1)
+        bf = ttk.Frame(f)
+        bf.grid(row=4, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        ttk.Button(bf, text=self.t("upload"), command=self.upload_selected).pack(side="left")
+        ttk.Button(bf, text=self.t("copy_to"), command=self.copy_selected).pack(side="left", padx=4)
+        ttk.Button(bf, text=self.t("cancel"), command=self.cancel_transfer).pack(side="left")
+        ttk.Button(bf, text=self.t("refresh"), command=self.refresh_sessions).pack(side="right")
+        self.xfer_bar = ttk.Progressbar(f, maximum=1000)
+        self.xfer_bar.grid(row=5, column=0, columnspan=2, sticky="ew", padx=6)
+        self.xfer_var = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.xfer_var, wraplength=480, font=("Consolas", 9)).grid(
+            row=6, column=0, columnspan=2, sticky="w", padx=6)
+        ttk.Label(f, text=self.t("copy_hint"), foreground="#666", wraplength=480).grid(
+            row=7, column=0, columnspan=2, sticky="w", padx=6, pady=(6, 0))
+        self.refresh_sessions()
+
         # -- right: preview, status, traffic --
         right.columnconfigure(0, weight=1)
         self.canvas = tk.Canvas(right, width=self.PREVIEW_W, height=self.PREVIEW_H, bg="#0B1F3A",
@@ -388,6 +456,7 @@ class RecorderApp:
         s = SessionSettings(**asdict(self.s))
         v = {k: x.get() for k, x in self.vars.items()}
         try:
+            s.upload_code = "".join(str(v["upload_code"]).split())
             for name in ("operator", "station_name", "notes", "output_dir", "camera_source",
                          "pixel_format", "adsb_address", "dump1090_path", "ogn_local_address",
                          "flarm_address"):
@@ -526,12 +595,14 @@ class RecorderApp:
             messagebox.showerror(self.t("error"), err)
             self.rec = None
         self.set_running_ui()
+        self.refresh_sessions()
 
     def stop_recording(self) -> None:
         rec = self.rec
         folder = rec.stop()
         st = rec.stats()
         self.set_running_ui()
+        self.refresh_sessions()
         frames = st.get("camera", {}).get("written", 0)
         ac = st.get("traffic", {}).get("aircraft", 0)
         messagebox.showinfo(self.t("done_title"), self.t("done_msg").format(
@@ -553,7 +624,131 @@ class RecorderApp:
 
     # -- periodic update --
 
+    # -- hand in --
+
+    def update_target(self) -> None:
+        code = "".join(self.vars["upload_code"].get().split()) if "upload_code" in self.vars else ""
+        if not code:
+            self.target_var.set(self.t("not_set"))
+            return
+        try:
+            self.target_var.set(UploadConfig.from_code(code).describe())
+        except Exception:
+            self.target_var.set(self.t("bad_code"))
+
+    def refresh_sessions(self) -> None:
+        if not hasattr(self, "sess_tree"):
+            return
+        folder = self.vars["output_dir"].get() if "output_dir" in self.vars else self.s.output_dir
+        sel = self.sess_tree.selection()
+        self.sess_tree.delete(*self.sess_tree.get_children())
+        self._sessions = {}
+        running_dir = self.rec.dir if (self.rec and self.rec.running) else None
+        for x in list_sessions(folder):
+            state = {"done": self.t("st_done"), "partial": self.t("st_partial")}.get(x["upload"], "–")
+            if running_dir and x["path"] == running_dir:
+                state = self.t("st_running")
+            iid = str(x["path"])
+            self._sessions[iid] = x
+            self.sess_tree.insert("", "end", iid=iid, values=(
+                x["name"], fmt_duration(x["duration_s"] or 0), f"{x['bytes'] / 1e9:.2f}", state))
+        for iid in sel:
+            if self.sess_tree.exists(iid):
+                self.sess_tree.selection_set(iid)
+
+    def _selected_session(self) -> Path | None:
+        sel = self.sess_tree.selection()
+        if not sel:
+            messagebox.showinfo(self.t("handin"), self.t("select_session"))
+            return None
+        path = Path(sel[0])
+        if self.rec and self.rec.running and self.rec.dir == path:
+            messagebox.showinfo(self.t("handin"), self.t("st_running"))
+            return None
+        return path
+
+    def _start_job(self, kind: str, target, path: Path) -> None:
+        self.job = {"kind": kind, "path": path, "progress": Progress(), "thread": None,
+                    "result": None, "error": None, "stop": threading.Event()}
+
+        def worker():
+            job = self.job
+            try:
+                if kind == "upload":
+                    up = SessionUploader(path, target)
+                    job["uploader"] = up
+                    job["progress"] = up.progress
+                    ok = up.run()
+                    job["result"] = ok
+                    if not ok:
+                        job["error"] = up.progress.error or "paused"
+                else:
+                    job["result"] = copy_session(path, target, lambda p: job.__setitem__("progress", p),
+                                                 job["stop"])
+            except Exception as e:
+                job["error"] = str(e)
+            self.root.after(0, self.job_finished)
+        t = threading.Thread(target=worker, daemon=True)
+        self.job["thread"] = t
+        t.start()
+
+    def upload_selected(self) -> None:
+        if getattr(self, "job", None):
+            messagebox.showinfo(self.t("handin"), self.t("busy"))
+            return
+        path = self._selected_session()
+        if not path:
+            return
+        try:
+            cfg = UploadConfig.from_code(self.vars["upload_code"].get())
+        except Exception:
+            messagebox.showerror(self.t("error"), self.t("bad_code"))
+            return
+        self.save_settings()
+        self._start_job("upload", cfg, path)
+
+    def copy_selected(self) -> None:
+        if getattr(self, "job", None):
+            messagebox.showinfo(self.t("handin"), self.t("busy"))
+            return
+        path = self._selected_session()
+        if not path:
+            return
+        dest = filedialog.askdirectory(title=self.t("copy_hint"))
+        if dest:
+            self._start_job("copy", dest, path)
+
+    def cancel_transfer(self) -> None:
+        job = getattr(self, "job", None)
+        if job:
+            job["stop"].set()
+            if job.get("uploader"):
+                job["uploader"].stop()
+
+    def job_finished(self) -> None:
+        job, self.job = self.job, None
+        self.refresh_sessions()
+        self.update_transfer(job)
+        if job["error"]:
+            if not job["stop"].is_set():
+                messagebox.showwarning(self.t("handin"), self.t("transfer_failed").format(err=job["error"]))
+        elif job["kind"] == "upload":
+            messagebox.showinfo(self.t("handin"), self.t("upload_done").format(name=job["path"].name))
+        else:
+            messagebox.showinfo(self.t("handin"), self.t("copy_done").format(dest=job["result"]))
+
+    def update_transfer(self, job=None) -> None:
+        job = job or getattr(self, "job", None)
+        if not job or not hasattr(self, "xfer_bar"):
+            return
+        pr = job["progress"]
+        self.xfer_bar["value"] = int(pr.fraction * 1000)
+        eta = f"  ~{fmt_duration(pr.eta_s)}" if pr.eta_s else ""
+        self.xfer_var.set(f"{job['path'].name}: {pr.done_bytes / 1e9:.2f} / {pr.total_bytes / 1e9:.2f} GB"
+                          f"  {pr.rate_bps / 1e6:.1f} MB/s{eta}\n{pr.current}")
+
     def tick(self) -> None:
+        self.update_transfer()
         try:
             self.update_status()
         except Exception:  # never let the UI timer die
@@ -682,6 +877,8 @@ def self_test(out: str) -> int:
     app = RecorderApp(root, tmp / "settings.json")
     for lang in ("it", "en", "de"):
         app.change_language(LANGS[lang])
+    # the frozen exe must contain boto3/botocore data for uploads
+    UploadConfig("https://s3.example.com", "b", "k", "s", "us-east-1").client()
     root.after(1500, root.destroy)
     root.mainloop()
     Path(out).write_text(f"ok {__version__} opencv {cv2.__version__}\n", encoding="utf-8")

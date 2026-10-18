@@ -195,6 +195,34 @@ def _cmd_synth_session(args) -> int:
     return 0
 
 
+def _cmd_upload_code(args) -> int:
+    from .recorder.upload import UploadConfig
+    cfg = UploadConfig(endpoint=args.endpoint, bucket=args.bucket, key_id=args.key_id,
+                       secret=args.secret, region=args.region, prefix=args.prefix)
+    if args.check:
+        cfg.client().put_object(Bucket=cfg.bucket, Key=f"{cfg.prefix}/_check.txt".lstrip("/"),
+                                Body=b"ota upload check\n")
+        print("Test upload OK.")
+    print(cfg.to_code())
+    return 0
+
+
+def _cmd_upload(args) -> int:
+    import os
+    from .recorder.upload import SessionUploader, UploadConfig
+    code = args.code or os.environ.get("OTA_UPLOAD_CODE", "")
+    cfg = UploadConfig.from_code(code)
+    for folder in args.sessions:
+        up = SessionUploader(folder, cfg, on_progress=lambda p: print(
+            f"  {p.done_bytes / 1e9:6.2f}/{p.total_bytes / 1e9:.2f} GB  {p.rate_bps / 1e6:5.1f} MB/s"
+            f"  {p.current:<40}", end="\r", flush=True))
+        ok = up.run()
+        print(f"\n{folder}: {'complete' if ok else 'INCOMPLETE - ' + up.progress.error}")
+        if not ok:
+            return 1
+    return 0
+
+
 def _cmd_probe(args) -> int:
     """Try resolutions and pixel formats and report what the camera really delivers."""
     import time
@@ -397,6 +425,22 @@ def build_parser() -> argparse.ArgumentParser:
     ss = sub.add_parser("synth-session", help="create a synthetic recording session")
     ss.add_argument("out", nargs="?", default="data/sessions")
     ss.set_defaults(func=_cmd_synth_session)
+
+    uc = sub.add_parser("upload-code", help="create an upload code for club members (B2/R2/S3)")
+    uc.add_argument("--endpoint", required=True,
+                    help="S3 endpoint, e.g. https://s3.eu-central-003.backblazeb2.com")
+    uc.add_argument("--bucket", required=True)
+    uc.add_argument("--key-id", required=True)
+    uc.add_argument("--secret", required=True)
+    uc.add_argument("--region", default="auto")
+    uc.add_argument("--prefix", default="", help="folder in the bucket, e.g. the club name")
+    uc.add_argument("--check", action="store_true", help="test the key with a small upload first")
+    uc.set_defaults(func=_cmd_upload_code)
+
+    up = sub.add_parser("upload", help="upload session folders with an upload code (resumable)")
+    up.add_argument("sessions", nargs="+")
+    up.add_argument("--code", help="upload code (or environment variable OTA_UPLOAD_CODE)")
+    up.set_defaults(func=_cmd_upload)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")
