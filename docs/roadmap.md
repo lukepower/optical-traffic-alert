@@ -11,7 +11,8 @@
 - [x] Synthetic test video generator, end-to-end test
 - [x] ADS-B parser (SBS-1), IMU parser
 - [x] Training crops from the AOT dataset (`fetch_aot_crops.py`)
-- [ ] Train the classifier, deploy with OpenVINO on the Iris Xe
+- [x] Train the classifier (AOT, 82.7 % val. accuracy) and export to OpenVINO
+- [ ] Run it on the Iris Xe laptop; measure on own recordings
 - [ ] Collect own ground recordings at an airfield
 - [ ] ADS-B cross-check in the pipeline (cooperative / non-cooperative)
 - [ ] Evaluation script: event log against ADS-B ground truth
@@ -28,7 +29,7 @@
 ## Phase 3 – extensions
 
 - [ ] Targets below the horizon (terrain background, motion compensation)
-- [ ] Temporal classifier (motion pattern: bird vs. aircraft)
+- [ ] Temporal classifier (motion pattern: bird vs. aircraft) – main weakness of the frame classifier
 - [ ] FLARM reception (868 MHz, OGN) in the fusion
 - [ ] Range estimate from aircraft type / wingspan
 - [ ] Lens distortion, sun/glare detection

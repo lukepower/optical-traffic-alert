@@ -142,8 +142,9 @@ docs/                       documentation (see below)
 
 Phase 1 (ground prototype on a laptop): the pipeline runs end to end on video files and USB cameras,
 flags the collision target in the synthetic scenario as `WARNING` and suppresses windscreen specks.
-The classifier is being trained on the AOT dataset; until a model is in `models/`, the pipeline runs
-with `classifier.backend: none`. See [docs/roadmap.md](docs/roadmap.md).
+A first crop classifier has been trained on the AOT dataset (82.7 % validation accuracy, see
+[docs/training.md](docs/training.md#4-evaluation)); the pipeline uses it automatically when
+`models/classifier.xml` is present. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 

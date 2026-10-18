@@ -83,8 +83,8 @@ A small CNN rates 64×64 px crops around each candidate.
 
 * Classes (alphabetical, as Ultralytics sorts them): `aircraft` (0), `background` (1), `bird` (2)
 * Input: 1×3×64×64, RGB, 0..1; output: class scores (logits or probabilities)
-* Backends: `none` (pass all candidates, default until a model is trained), `openvino` (Intel
-  CPU/iGPU), later TensorRT on the Jetson
+* Backends: `auto` (default: OpenVINO if `models/classifier.xml` exists, otherwise none),
+  `none` (pass all candidates), `openvino` (Intel CPU/iGPU), later TensorRT on the Jetson
 * Threshold: `min_probability`
 
 Training: [training.md](training.md).
@@ -214,7 +214,7 @@ times as much. Knobs: `frame_stride`, smaller `kernel_px`, `pyramid_scales: [1.0
 ## Known limitations (phase 1)
 
 * only targets against the sky (`sky_only`)
-* until the classifier is deployed, birds trigger `TRAFFIC`
+* the frame classifier confuses small birds and aircraft (~30 % of birds pass at the default threshold)
 * no lens distortion, no attitude correction for high/low
 * cameras are processed one after another in a single thread
 * range drops significantly against the sun and in strong haze

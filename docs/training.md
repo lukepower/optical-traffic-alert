@@ -101,13 +101,50 @@ Copy `models/classifier.xml` and `.bin` to the laptop, then in `config/default.y
 
 ```yaml
 classifier:
-  backend: openvino
+  backend: auto       # uses the model when models/classifier.xml exists
   model_path: models/classifier.xml
   device: AUTO        # or GPU for the Iris Xe
-  min_probability: 0.5
+  min_probability: 0.3
 ```
 
 ## 4. Evaluation
+
+### First model (2026-10-18)
+
+Trained on the AOT part1 sample above, `yolo11n-cls`, 64×64, 40 epochs on an AMD Radeon RX 7700 XT
+(ROCm 7.2.1, Windows, MIOpen disabled; ~1 min 20 s per epoch). Validation top-1 accuracy 82.7 %.
+Validation loss started to rise in the last epochs (mild overfitting) – more and more varied data
+will help more than more epochs.
+
+Confusion matrix on the validation flights (OpenVINO model, rows = truth):
+
+| truth \ predicted | aircraft | background | bird |
+|---|---|---|---|
+| aircraft (1,690) | **1,313** | 107 | 270 |
+| background (2,284) | 55 | **2,183** | 46 |
+| bird (1,607) | 323 | 179 | **1,105** |
+
+Effect of the threshold on the aircraft probability (`classifier.min_probability`):
+
+| threshold | aircraft kept | background passed | birds passed |
+|---|---|---|---|
+| 0.2 | 87 % | 4.9 % | 38 % |
+| **0.3 (default)** | **83 %** | **3.5 %** | **30 %** |
+| 0.5 | 77 % | 2.2 % | 19 % |
+| 0.7 | 69 % | 1.3 % | 12 % |
+
+Reading these numbers:
+
+* Per **frame**, 17 % of aircraft crops are dropped at 0.3. A **track** still survives, because it
+  only needs `min_hits` detections and tolerates `max_misses` gaps.
+* Aircraft vs. **bird** is the weak spot: at 5–10 px they are hard to tell apart even for a human.
+  A temporal classifier (motion pattern over the track) is the planned fix.
+* Background crops in AOT are random patches. Real false candidates (horizon, cloud edges,
+  windscreen reflections) are harder – own recordings are needed to measure that.
+* In the synthetic end-to-end test the pipeline gives the same callouts with and without the
+  classifier, and is faster with it (39 vs. 52 ms/frame) because fewer candidates reach the tracker.
+
+### How to evaluate a new model
 
 * Ultralytics reports accuracy and a confusion matrix on `val` (`runs/classifier/train`).
 * More important is the effect in the pipeline: run the same videos with and without the classifier
@@ -115,6 +152,12 @@ classifier:
   be lost.
 * Keep `min_probability` rather low (0.3–0.5): the tracker filters as well. A rejected real aircraft
   is worse than a bird that gets through.
+
+### Deployment
+
+`models/` is not in the repository. Copy `classifier.xml` + `classifier.bin` into `models/` on the
+machine that runs the pipeline. With the default `classifier.backend: auto` the model is used
+automatically when it is present and OpenVINO is installed.
 
 ## Outlook
 

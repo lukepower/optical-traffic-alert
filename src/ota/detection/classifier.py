@@ -5,7 +5,8 @@ Decides for each candidate crop whether it is an aircraft or something else
 
 Backends
 --------
-* ``none``     - accepts every candidate (score 1.0). Default until a model is trained.
+* ``auto``     - ``openvino`` if ``model_path`` exists and OpenVINO is installed, else ``none`` (default)
+* ``none``     - accepts every candidate (score 1.0).
 * ``openvino`` - runs an OpenVINO IR model (``.xml`` + ``.bin``). This is the
   format Ultralytics exports with ``format="openvino"`` and it runs on Intel
   CPUs and Intel iGPUs (Iris Xe) without CUDA. On the Jetson the same network
@@ -82,6 +83,20 @@ class OpenVinoClassifier(Classifier):
 
 
 def make_classifier(cfg: ClassifierConfig) -> Classifier:
+    if cfg.backend == "auto":
+        # Use the trained model if it is there and OpenVINO is installed,
+        # otherwise run without classifier (models/ is not in the repository).
+        from pathlib import Path
+        try:
+            import openvino  # noqa: F401
+            has_ov = True
+        except ImportError:
+            has_ov = False
+        if has_ov and Path(cfg.model_path).exists():
+            return OpenVinoClassifier(cfg)
+        log.warning("classifier: no model at %s or OpenVINO missing - running without classifier",
+                    cfg.model_path)
+        return PassthroughClassifier()
     if cfg.backend == "none":
         return PassthroughClassifier()
     if cfg.backend == "openvino":

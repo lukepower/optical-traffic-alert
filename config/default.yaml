@@ -25,12 +25,12 @@ detector:
   sky_margin_px: 24        # keep this distance from the horizon edge
 
 classifier:
-  backend: none            # none | openvino
+  backend: auto            # auto (openvino if models/classifier.xml exists) | none | openvino
   model_path: models/classifier.xml
   device: AUTO             # AUTO | CPU | GPU (Intel Iris Xe)
   crop_px: 64
   aircraft_class: 0
-  min_probability: 0.5
+  min_probability: 0.3     # keeps ~83 % of aircraft crops, passes ~3.5 % of background
 
 tracker:
   gate_px: 40

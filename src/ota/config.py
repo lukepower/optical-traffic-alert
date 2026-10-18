@@ -84,14 +84,16 @@ class DetectorConfig:
 
 @dataclass
 class ClassifierConfig:
-    # "none" (accept all candidates) or "openvino"
-    backend: str = "none"
+    # "auto" (openvino if the model exists, else none), "none" or "openvino"
+    backend: str = "auto"
     model_path: str = "models/classifier.xml"
     device: str = "AUTO"  # AUTO, CPU, GPU (Intel iGPU), ...
     crop_px: int = 64
     # Index of the "aircraft" class in the model output
     aircraft_class: int = 0
-    min_probability: float = 0.5
+    # Low on purpose: the tracker filters as well, and dropping a real aircraft
+    # is worse than letting a bird through (see docs/training.md, evaluation).
+    min_probability: float = 0.3
 
 
 @dataclass
