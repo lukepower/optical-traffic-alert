@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/
+
+# Data, recordings and outputs (large / private)
+data/*
+!data/README.md
+out/
+runs/
+*.mp4
+*.mkv
+*.avi
+
+# Models (download or train locally)
+models/*
+!models/README.md
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

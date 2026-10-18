@@ -1,0 +1,38 @@
+# Generic high-wing single (e.g. Cessna 150/172/182)
+# The wing blocks the upper view: side cameras are tilted slightly DOWN.
+
+aircraft: high-wing-generic
+
+cameras:
+  - name: front
+    source: usb:0
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 50
+    yaw_deg: 0
+    pitch_deg: 0
+    masks:
+      - {x0: 0.0, y0: 0.85, x1: 1.0, y1: 1.0}   # glareshield / cowling
+
+  - name: left
+    source: usb:1
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 60
+    yaw_deg: -55
+    pitch_deg: -3
+    masks:
+      - {x0: 0.0, y0: 0.0, x1: 1.0, y1: 0.15}   # wing root / door frame
+
+  - name: right
+    source: usb:2
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 60
+    yaw_deg: 55
+    pitch_deg: -3
+    masks:
+      - {x0: 0.0, y0: 0.0, x1: 1.0, y1: 0.15}

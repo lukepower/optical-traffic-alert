@@ -1,0 +1,75 @@
+# Optical Traffic Alert - processing parameters
+# All keys are optional; missing keys fall back to the defaults in src/ota/config.py.
+# Aircraft-specific camera setup lives in config/aircraft/<type>.yaml
+# and is selected with:  ota run --aircraft v35a
+
+cameras:
+  - name: front
+    source: usb:0          # file:<path> | usb:<index> | gmsl:<index> (Jetson, later)
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 50
+
+detector:
+  kernel_px: 15            # objects smaller than this are highlighted
+  sigma_k: 6.0             # threshold = mean + k*std of the filter response ...
+  min_contrast: 12         # ... but at least this (0..255)
+  min_area_px: 2
+  max_area_px: 2500
+  max_candidates: 50
+  frame_stride: 1          # 2 = every second frame (weak hardware)
+  pyramid_scales: [1.0, 0.25]  # 1.0 = distant targets, 0.25 = close/large targets
+  max_background_std: 18   # reject candidates on non-uniform background (horizon, terrain); 0 = off
+  sky_only: true           # phase 1: search only in the sky region (per-frame segmentation)
+  sky_margin_px: 24        # keep this distance from the horizon edge
+
+classifier:
+  backend: none            # none | openvino
+  model_path: models/classifier.xml
+  device: AUTO             # AUTO | CPU | GPU (Intel Iris Xe)
+  crop_px: 64
+  aircraft_class: 0
+  min_probability: 0.5
+
+tracker:
+  gate_px: 40
+  min_hits: 5
+  max_misses: 15
+  alpha: 0.6
+  beta: 0.2
+  history_s: 10
+
+threat:
+  min_track_age_s: 2.0
+  max_bearing_rate_dps: 0.6
+  advisory_tau_s: 40
+  warning_tau_s: 20
+  min_growth_rate: 0.01
+  min_growth_trend: 0.25    # size must grow consistently (Kendall rank correlation) ...
+  min_size_change_px: 1.0   # ... and at least this many pixels over the window
+  threat_hold_s: 1.0        # collision geometry must persist this long
+  threat_release_s: 3.0     # a reported threat is held this long (no flicker)
+  level_band_deg: 5
+  announce_all_traffic: true
+  static_max_rate_dps: 0.15
+
+audio:
+  backend: print           # print | pyttsx3 | piper
+  language: en             # en | de
+  piper_executable: piper
+  piper_model: models/tts/en_US-lessac-medium.onnx
+  min_gap_s: 3
+  repeat_s: 10
+
+adsb:
+  enabled: false
+  host: 127.0.0.1
+  port: 30003              # dump1090 / readsb SBS-1 output
+  max_age_s: 15
+  match_tolerance_deg: 6
+
+output:
+  show: false
+  record_path: ""
+  event_log: out/events.jsonl

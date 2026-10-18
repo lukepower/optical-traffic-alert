@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optical-traffic-alert"
+version = "0.1.0"
+description = "Optical traffic alert for light aircraft: cameras -> detection -> tracking -> audio callouts"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lukas Demetz" }]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Inference of the crop classifier on Intel CPU/iGPU (and also works on NVIDIA via CPU)
+openvino = ["openvino>=2024.0"]
+# Training the crop classifier (run on a machine with a GPU)
+train = ["ultralytics>=8.3"]
+# Speech output on Windows without extra downloads (uses Windows SAPI voices)
+tts = ["pyttsx3>=2.90"]
+# IMU / GNSS over a USB serial port
+serial = ["pyserial>=3.5"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+ota = "ota.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

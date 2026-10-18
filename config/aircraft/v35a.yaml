@@ -1,0 +1,49 @@
+# Beechcraft V35A Bonanza - low wing, single engine, propeller in front.
+# Cameras mounted INSIDE the cabin (portable installation, no modification).
+#
+# Angles: yaw + = right, pitch + = up, relative to the longitudinal axis.
+# Masks: normalised rectangles (0..1) that are ignored by the detector.
+# The values below are a starting point - measure your real mounting
+# (docs/kalibrierung.md) and adjust.
+
+aircraft: v35a
+
+cameras:
+  - name: front
+    source: usb:0
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 50           # narrow: front sector needs the most range
+    yaw_deg: 0
+    pitch_deg: 3           # slightly up, cowling stays out of the image
+    masks:
+      - {x0: 0.0, y0: 0.88, x1: 1.0, y1: 1.0}   # glareshield / cowling edge
+      # - {x0: 0.47, y0: 0.0, x1: 0.53, y1: 0.06}  # example: windscreen centre strip, if present
+
+  - name: left
+    source: usb:1
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 60
+    yaw_deg: -55
+    pitch_deg: 5           # low wing: tilt up, the wing blocks the lower view
+    masks:
+      - {x0: 0.0, y0: 0.80, x1: 1.0, y1: 1.0}   # wing / window frame
+
+  - name: right
+    source: usb:2
+    width: 3840
+    height: 2160
+    fps: 30
+    hfov_deg: 60
+    yaw_deg: 55
+    pitch_deg: 5
+    masks:
+      - {x0: 0.0, y0: 0.80, x1: 1.0, y1: 1.0}
+
+threat:
+  # V35A cruises ~170 kt; head-on closure with similar traffic up to ~120 m/s.
+  advisory_tau_s: 40
+  warning_tau_s: 20

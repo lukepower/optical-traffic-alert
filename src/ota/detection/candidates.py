@@ -1,0 +1,193 @@
+"""Stage 1: cheap candidate detection with classical image processing.
+
+Idea: a distant aircraft against the sky is a small blob that is darker (or,
+with sun glint, brighter) than its immediate surroundings. A morphological
+black-hat / top-hat filter removes everything larger than the kernel - sky
+gradient, clouds, terrain - and keeps small, contrasty spots.
+
+This runs in real time on a laptop CPU even at 4K and produces a short list of
+candidates. Only these small crops go through the neural classifier
+(stage 2), which is orders of magnitude cheaper than running a network over
+the full frame.
+
+Known limitation: below the horizon (terrain, mountains) there is a lot more
+small structure, so the false-candidate rate rises there. The classifier and
+the tracker (which demands consistent motion over many frames) handle that.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+
+from ..config import CameraConfig, DetectorConfig
+
+
+@dataclass
+class Candidate:
+    x: float        # centre, full-resolution pixels
+    y: float
+    w: float
+    h: float
+    area: float
+    contrast: float  # peak response of the morphological filter
+    polarity: str    # "dark" or "bright"
+    score: float = 1.0  # classifier probability (filled in by stage 2)
+    eff_area: float = 0.0  # integrated contrast / peak contrast, in px^2
+
+    @property
+    def size(self) -> float:
+        """Characteristic size in pixels, used for the growth (tau) estimate.
+
+        sqrt of the effective area if available, else geometric mean of w and h.
+        """
+        if self.eff_area > 0:
+            return float(np.sqrt(self.eff_area))
+        return float(np.sqrt(max(self.w, 1.0) * max(self.h, 1.0)))
+
+
+class CandidateDetector:
+    def __init__(self, cfg: DetectorConfig, cam: CameraConfig | None = None):
+        self.cfg = cfg
+        self.cam = cam
+        k = max(3, int(cfg.kernel_px) | 1)  # odd
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        self._mask_cache: tuple[tuple[int, int], np.ndarray] | None = None
+        self._sky: np.ndarray | None = None
+
+    def _mask(self, shape: tuple[int, int]) -> np.ndarray | None:
+        if not self.cam or not self.cam.masks:
+            return None
+        if self._mask_cache and self._mask_cache[0] == shape:
+            return self._mask_cache[1]
+        h, w = shape
+        m = np.full((h, w), 255, np.uint8)
+        for r in self.cam.masks:
+            m[int(r.y0 * h):int(r.y1 * h), int(r.x0 * w):int(r.x1 * w)] = 0
+        self._mask_cache = (shape, m)
+        return m
+
+    def sky_mask(self, gray: np.ndarray) -> np.ndarray:
+        """Per-frame sky segmentation (255 = sky) at full resolution.
+
+        A heavily blurred thumbnail is split into a bright and a dark class
+        with Otsu's method; the bright class is the sky. The mask is eroded so
+        the horizon edge itself (a strong, textured edge) is excluded.
+        """
+        h, w = gray.shape
+        f = 8
+        thumb = cv2.resize(gray, (max(1, w // f), max(1, h // f)), interpolation=cv2.INTER_AREA)
+        thumb = cv2.GaussianBlur(thumb, (0, 0), 2)
+        _, sky = cv2.threshold(thumb, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        sky = cv2.morphologyEx(sky, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        margin = max(1, int(round(self.cfg.sky_margin_px / f)))
+        sky = cv2.erode(sky, np.ones((2 * margin + 1, 2 * margin + 1), np.uint8))
+        return cv2.resize(sky, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    def detect(self, image: np.ndarray) -> list[Candidate]:
+        cfg = self.cfg
+        gray_full = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        self._sky = self.sky_mask(gray_full) if cfg.sky_only else None
+        scales = sorted(cfg.pyramid_scales or [1.0], reverse=True)
+        k = self.kernel.shape[0]
+
+        per_scale: list[list[Candidate]] = []
+        for scale in scales:
+            gray = gray_full if scale == 1.0 else cv2.resize(
+                gray_full, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            sky = None
+            if self._sky is not None:
+                sky = self._sky if scale == 1.0 else cv2.resize(
+                    self._sky, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_NEAREST)
+            found = self._detect_level(gray, scale, sky)
+            fine = scale == scales[0]
+            # Each level keeps the object sizes it handles well: the finest level
+            # small objects, coarser levels objects too large for the fine kernel.
+            lo = 0.0 if fine else 0.8 * k
+            hi = k / max(scale, 1e-6) * 0.9 if len(scales) > 1 else float("inf")
+            per_scale.append([c for c in found if lo <= max(c.w, c.h) <= hi])
+
+        # Drop fine-level fragments that lie inside a coarse detection
+        results: list[Candidate] = []
+        for level in reversed(per_scale):  # coarse first
+            for c in level:
+                inside = any(abs(c.x - o.x) <= o.w / 2 + 2 and abs(c.y - o.y) <= o.h / 2 + 2
+                             for o in results)
+                if not inside:
+                    results.append(c)
+
+        results.sort(key=lambda c: c.contrast, reverse=True)
+        return results[: cfg.max_candidates]
+
+    def _detect_level(self, gray: np.ndarray, scale: float,
+                      sky: np.ndarray | None = None) -> list[Candidate]:
+        cfg = self.cfg
+        mask = self._mask(gray.shape)
+        if sky is not None:
+            mask = sky if mask is None else cv2.bitwise_and(mask, sky)
+        k = self.kernel.shape[0]
+        results: list[Candidate] = []
+        ops = []
+        if cfg.detect_dark:
+            ops.append(("dark", cv2.MORPH_CLOSE))
+        if cfg.detect_bright:
+            ops.append(("bright", cv2.MORPH_OPEN))
+
+        for polarity, op in ops:
+            # background = the image with small objects removed
+            background = cv2.morphologyEx(gray, op, self.kernel)
+            resp = cv2.subtract(background, gray) if polarity == "dark" else cv2.subtract(gray, background)
+            if mask is not None:
+                resp = cv2.bitwise_and(resp, resp, mask=mask)
+            mean, std = cv2.meanStdDev(resp)
+            thr = max(cfg.min_contrast, float(mean[0][0] + cfg.sigma_k * std[0][0]))
+            _, binary = cv2.threshold(resp, thr, 255, cv2.THRESH_BINARY)
+            # join fragments of one object (fuselage / wings / tail)
+            binary = cv2.dilate(binary, np.ones((3, 3), np.uint8))
+            n, _, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+            if n <= 1:
+                continue
+
+            bg_std = None
+            if cfg.max_background_std > 0:
+                win = 3 * k
+                bgf = background.astype(np.float32)
+                m = cv2.boxFilter(bgf, -1, (win, win))
+                m2 = cv2.boxFilter(bgf * bgf, -1, (win, win))
+                bg_std = np.sqrt(np.maximum(m2 - m * m, 0))
+
+            for i in range(1, n):
+                x, y, w, h, area = stats[i]
+                # dilation added a 1 px border; remove it again from the size
+                w, h = max(1, w - 2), max(1, h - 2)
+                area = max(1, area - 2 * (w + h))
+                area_full = area / (scale * scale)
+                if area_full < cfg.min_area_px or area_full > cfg.max_area_px:
+                    continue
+                cx, cy = centroids[i]
+                if bg_std is not None and bg_std[int(cy), int(cx)] > cfg.max_background_std:
+                    continue
+                roi = resp[y:y + h + 2, x:x + w + 2]
+                contrast = float(roi.max())
+                # Integrated contrast ("mass") divided by the peak gives an
+                # effective area that changes smoothly with distance, unlike
+                # the pixel count of the thresholded blob, which jumps.
+                mass = float(roi[roi > thr * 0.5].sum())
+                eff_area = mass / max(contrast, 1.0) / (scale * scale)
+                results.append(Candidate(
+                    x=cx / scale, y=cy / scale, w=w / scale, h=h / scale,
+                    area=area_full, contrast=contrast, polarity=polarity,
+                    eff_area=eff_area,
+                ))
+        return results
+
+
+def crop(image: np.ndarray, c: Candidate, size: int) -> np.ndarray:
+    """Square crop centred on a candidate, padded at image borders."""
+    half = size // 2
+    h, w = image.shape[:2]
+    x0, y0 = int(round(c.x)) - half, int(round(c.y)) - half
+    pad = cv2.copyMakeBorder(image, half, half, half, half, cv2.BORDER_REFLECT)
+    return pad[y0 + half:y0 + half + size, x0 + half:x0 + half + size]
