@@ -68,6 +68,16 @@ class CameraModel:
         el = math.degrees(math.atan2(b[1], math.hypot(b[0], b[2])))
         return Direction(az, el)
 
+    def direction_to_pixel(self, azimuth_deg: float, elevation_deg: float
+                           ) -> tuple[float, float] | None:
+        """Inverse of ``pixel_to_direction``. Returns None for directions behind the camera."""
+        az, el = math.radians(azimuth_deg), math.radians(elevation_deg)
+        b = np.array([math.sin(az) * math.cos(el), math.sin(el), math.cos(az) * math.cos(el)])
+        d = self.R.T @ b
+        if d[2] <= 1e-6:
+            return None
+        return self.cx + self.f * d[0] / d[2], self.cy - self.f * d[1] / d[2]
+
     def angular_size_deg(self, size_px: float) -> float:
         return size_px * self.deg_per_px
 

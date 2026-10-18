@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optical-traffic-alert"
-version = "0.1.0"
+version = "0.2.0"
 description = "Optical traffic alert for light aircraft: cameras -> detection -> tracking -> audio callouts"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,12 +23,17 @@ openvino = ["openvino>=2024.0"]
 train = ["ultralytics>=8.3"]
 # Speech output on Windows without extra downloads (uses Windows SAPI voices)
 tts = ["pyttsx3>=2.90"]
-# IMU / GNSS over a USB serial port
+# IMU / GNSS / FLARM over a USB serial port
 serial = ["pyserial>=3.5"]
+# OTA Recorder: FLARM serial port + Windows .exe build
+recorder = ["pyserial>=3.5"]
 dev = ["pytest>=7"]
 
 [project.scripts]
 ota = "ota.cli:main"
+
+[project.gui-scripts]
+ota-recorder = "ota.recorder.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

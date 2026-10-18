@@ -121,3 +121,151 @@ def make_synthetic_video(path: str | Path, width: int = 1920, height: int = 1080
     }
     path.with_suffix(".json").write_text(json.dumps(truth, indent=2), encoding="utf-8")
     return truth
+
+
+# --- synthetic recording session (for the evaluation tool) -----------------------------------------
+
+def make_synthetic_session(parent: str | Path, width: int = 1280, height: int = 720, fps: float = 10.0,
+                           duration_s: float = 40.0, seed: int = 11,
+                           heading_error_deg: float = 2.0, pitch_error_deg: float = 0.5) -> Path:
+    """Write a complete session folder as the recorder would, with known geometry.
+
+    Station at LIPB, camera looking 190 deg true, pitch 3 deg, 50 deg HFOV. Traffic:
+
+    * ``4CA2D6`` ADS-B airliner-sized target approaching from 6 km to ~3 km (drawn)
+    * ``DDA5BA`` FLARM glider via OGN, crossing at 3 km, higher (drawn)
+    * ``3C6444`` ADS-B jet at 30 km - in the field of view but far too small (not drawn)
+    * one non-cooperative paraglider without any transponder (drawn, no traffic report)
+
+    ``session.json`` records the heading/pitch *with an error* of
+    ``heading_error_deg``/``pitch_error_deg`` - the evaluation should find it.
+    The traffic lines go through the real parsers (SBS, OGN APRS).
+    """
+    import datetime as dt
+
+    from .config import CameraConfig
+    from .geometry import CameraModel
+    from .recorder.video import open_writer
+    from .sensors.adsb import SbsParser, sbs_report
+    from .sensors.ogn import parse_aprs
+    from .sensors.traffic import look_angles, offset_position
+
+    rng = np.random.default_rng(seed)
+    lat0, lon0, elev = 46.4603, 11.3264, 241.0
+    heading, pitch, hfov = 190.0, 3.0, 50.0
+    qnh = 1020.0
+    t0 = dt.datetime(2026, 10, 20, 8, 0, 0, tzinfo=dt.timezone.utc).timestamp()
+    folder = Path(parent) / "20261020-080000Z_SYNTH"
+    (folder / "camera").mkdir(parents=True, exist_ok=True)
+    (folder / "raw").mkdir(exist_ok=True)
+
+    def at(az: float, dist: float, alt_agl: float) -> tuple[float, float, float]:
+        n, e = dist * math.cos(math.radians(az)), dist * math.sin(math.radians(az))
+        la, lo = offset_position(lat0, lon0, n, e)
+        return la, lo, elev + alt_agl
+
+    def lerp(p, q, x):
+        return tuple(a + (b - a) * x for a, b in zip(p, q))
+
+    a0, a1 = at(185, 6000, 550), at(187, 2800, 330)
+    g0, g1 = at(172, 3000, 750), at(205, 3100, 760)
+    j0, j1 = at(196, 30000, 10500), at(198, 31000, 10500)
+    pg = at(200, 1800, 260)
+
+    def pos(name: str, t: float):
+        x = t / duration_s
+        return {"A": lerp(a0, a1, x), "G": lerp(g0, g1, x), "J": lerp(j0, j1, x),
+                "P": (pg[0] + 1e-6 * t, pg[1] + 4e-6 * t, pg[2])}[name]
+
+    span = {"A": 34.0, "G": 15.0, "P": 10.0}
+    cam_true = CameraModel(CameraConfig(width=width, height=height, hfov_deg=hfov,
+                                        yaw_deg=heading, pitch_deg=pitch))
+    horizon_v = cam_true.direction_to_pixel(heading, 0.0)[1]
+    bg = _sky(width, height, int(horizon_v), rng)
+
+    # --- video ---
+    writer, vpath = open_writer(folder / "camera" / "cam0_000", "mjpg", fps, (width, height))
+    stamps = ["segment,frame,t_wall,t_rel"]
+    n = int(duration_s * fps)
+    for i in range(n):
+        t = i / fps
+        img = bg.copy()
+        for name in ("A", "G", "P"):
+            la, lo, al = pos(name, t)
+            az, el, rng_m = look_angles(lat0, lon0, elev, la, lo, al)
+            uv = cam_true.direction_to_pixel(az, el)
+            if uv:
+                _draw_aircraft(img, uv[0], uv[1], max(1.5, span[name] / rng_m * cam_true.f))
+        img += rng.normal(0, 2.0, img.shape).astype(np.float32)
+        writer.write(np.clip(img, 0, 255).astype(np.uint8))
+        jitter = rng.normal(0, 0.003)
+        stamps.append(f"0,{i},{t0 + t + jitter:.4f},{t + jitter:.4f}")
+    writer.release()
+    (folder / "camera" / "cam0.timestamps.csv").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+
+    # --- traffic: raw lines -> real parsers -> traffic.jsonl ---
+    def baro_ft(alt_msl: float) -> int:
+        # inverse of pressure_to_qnh_altitude, rounded to 25 ft like Mode S
+        p = qnh * (1 - alt_msl / 44330.8) ** 5.25588
+        h = 44330.8 * (1 - (p / 1013.25) ** 0.190263)
+        return int(round(h / 0.3048 / 25) * 25)
+
+    def dm(v: float, deg_digits: int) -> tuple[str, int]:
+        d = int(v)
+        m = round((v - d) * 60, 3)
+        thousands = int(round(m * 1000))
+        s = f"{d:0{deg_digits}d}{thousands // 1000:02d}.{(thousands % 1000) // 10:02d}"
+        return s, thousands % 10
+
+    sbs, aprs, reports = [], [], []
+    parser = SbsParser()
+    for k in range(int(duration_s * 2) + 4):
+        t = -1.0 + k * 0.5
+        for icao, name, call in (("4CA2D6", "A", "EIN5AB"), ("3C6444", "J", "DLH9X")):
+            la, lo, al = pos(name, t)
+            rx = t0 + t + 0.2
+            lines = [f"MSG,3,1,1,{icao},1,,,,,,{baro_ft(al)},,,{la:.5f},{lo:.5f},,,0,0,0,0"]
+            if k % 4 == 0:
+                lines.insert(0, f"MSG,1,1,1,{icao},1,,,,,{call},,,,,,,,,,,")
+            for line in lines:
+                sbs.append(f"{rx:.3f}\t{line}")
+                r = sbs_report(parser, line, rx)
+                if r:
+                    reports.append(r)
+    for k in range(int(duration_s) + 3):
+        t = -1.0 + k
+        la, lo, al = pos("G", t)
+        tt = dt.datetime.fromtimestamp(t0 + round(t), tz=dt.timezone.utc).strftime("%H%M%S")
+        la_s, la_d = dm(la, 2)
+        lo_s, lo_d = dm(lo, 3)
+        line = (f"FLRDDA5BA>OGFLR,qAS,LIPB:/{tt}h{la_s}N/{lo_s}E'110/085/A={int(al / 0.3048):06d}"
+                f" !W{la_d}{lo_d}! id06DDA5BA +020fpm +0.1rot 7.2dB 0e")
+        rx = t0 + round(t) + 1.5
+        aprs.append(f"{rx:.3f}\t{line}")
+        r = parse_aprs(line, rx)
+        if r:
+            reports.append(r)
+    reports.sort(key=lambda r: r.rx)
+    (folder / "raw" / "adsb_sbs.txt").write_text("\n".join(sbs) + "\n", encoding="utf-8")
+    (folder / "raw" / "ogn_aprs.txt").write_text("\n".join(aprs) + "\n", encoding="utf-8")
+    (folder / "traffic.jsonl").write_text("".join(r.to_json() + "\n" for r in reports),
+                                          encoding="utf-8")
+
+    meta = {
+        "format": "ota-session/1", "software": "synthetic", "mode": "ground",
+        "started_utc": dt.datetime.fromtimestamp(t0, tz=dt.timezone.utc).isoformat(),
+        "station": {"name": "SYNTH", "lat": lat0, "lon": lon0, "elev_m": elev},
+        "qnh_hpa": qnh,
+        "camera": {"source": "synthetic", "name": "cam0",
+                   "actual": {"width": width, "height": height, "format": "synthetic"},
+                   "requested": {"fps": fps},
+                   "heading_deg": heading + heading_error_deg, "pitch_deg": pitch + pitch_error_deg,
+                   "roll_deg": 0.0, "hfov_deg": hfov, "segments": [vpath.name],
+                   "timestamps": "camera/cam0.timestamps.csv"},
+        "truth": {"heading_deg": heading, "pitch_deg": pitch,
+                  "targets": {"icao:4CA2D6": "approach, drawn", "flarm:DDA5BA": "glider, drawn",
+                              "icao:3C6444": "30 km, not drawn",
+                              "non-cooperative": "paraglider at az 200, 1.8 km"}},
+    }
+    (folder / "session.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return folder

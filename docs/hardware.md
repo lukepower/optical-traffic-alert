@@ -10,7 +10,7 @@ The full bill of materials with prices (October 2026, EUR) is in
 | Laptop | existing (Intel Iris Xe is enough) | – |
 | USB camera | **in use:** Svpro 4K USB 3.0 camera, Sony IMX415, YUYV, CS-mount 5–50 mm zoom (Amazon B0CZDHVYLM) | €193 |
 | SDR for ADS-B | **in use:** Nooelec NESDR SMArt v5 (RTL2832U + R820T2, 0.5 ppm TCXO, 3 antennas); RTL-SDR Blog V4 is equivalent | €58 |
-| Second SDR for FLARM/OGN (868 MHz) | later | ~€50 |
+| Second SDR for FLARM/OGN (868 MHz) | optional; needs a Raspberry Pi with OGN software (no Windows decoder), or use OGN online / a FLARM data port instead ([recorder.md](recorder.md#getting-flarm-locally-second-sdr-stick)) | ~€50 + Pi |
 | Audio | USB audio adapter, intercom cable, ground-loop isolator | €65 |
 
 This is enough to develop and ground-test the whole pipeline. The zoom lens is for finding the best

@@ -14,8 +14,9 @@ Why fuse ADS-B with the cameras?
 * ADS-B targets give ground truth (distance, altitude) to validate and tune
   the optical tau estimate during test flights.
 
-FLARM on 868 MHz is received with a second SDR and OGN tooling; it can feed
-the same ``TrafficTarget`` structure (see docs/architecture.md).
+FLARM on 868 MHz comes from OGN (``ogn.py``) or a FLARM device's data port
+(``flarm.py``). For recording, every source is normalised to ``TrafficReport``
+(``traffic.py``); ``sbs_report`` does that for SBS lines.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import time
 from dataclasses import dataclass
 
 from ..geometry import bearing_and_distance, wrap180
+from .traffic import FT, TrafficReport
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ class TrafficTarget:
     speed_kt: float | None = None
     last_seen: float = 0.0
     source: str = "adsb"
+    vs_fpm: float | None = None
 
 
 class SbsParser:
@@ -69,7 +72,7 @@ class SbsParser:
         if p[10].strip():
             tgt.callsign = p[10].strip()
         for attr, idx in (("alt_ft", 11), ("speed_kt", 12), ("track_deg", 13),
-                          ("lat", 14), ("lon", 15)):
+                          ("lat", 14), ("lon", 15), ("vs_fpm", 16)):
             v = num(p[idx])
             if v is not None:
                 setattr(tgt, attr, v)
@@ -80,6 +83,19 @@ class SbsParser:
         now = self.clock()
         return [t for t in self.targets.values()
                 if now - t.last_seen <= max_age_s and t.lat is not None]
+
+
+def sbs_report(parser: SbsParser, line: str, rx: float) -> TrafficReport | None:
+    """Feed one SBS line; return a ``TrafficReport`` if it carried a new airborne position.
+
+    SBS altitudes are pressure altitudes (1013.25 hPa) -> ``alt_ref='baro'``."""
+    tgt = parser.feed(line)
+    if tgt is None or line.split(",")[1:2] != ["3"] or tgt.lat is None:
+        return None
+    return TrafficReport(
+        src="adsb", addr=tgt.icao, addr_type="icao", t=rx, rx=rx, lat=tgt.lat, lon=tgt.lon,
+        alt_m=tgt.alt_ft * FT if tgt.alt_ft is not None else None, alt_ref="baro",
+        track_deg=tgt.track_deg, gs_kt=tgt.speed_kt, vs_fpm=tgt.vs_fpm, callsign=tgt.callsign)
 
 
 class SbsClient:

@@ -185,14 +185,30 @@ dump1090 or readsb provide the SBS-1 format on TCP port 30003. `SbsParser` keeps
 ICAO address; `relative_position()` computes bearing relative to own heading, distance and altitude
 difference.
 
-Planned use:
+All cooperative sources are normalised into one record, `TrafficReport` (`sensors/traffic.py`):
+
+| Source | Module | Transport |
+|---|---|---|
+| ADS-B | `sensors/adsb.py` (`sbs_report`) | dump1090 SBS, TCP 30003 |
+| FLARM/OGN online | `sensors/ogn.py` | APRS-IS `aprs.glidernet.org:14580`, range filter |
+| FLARM/OGN local receiver | `sensors/ogn.py` | `ogn-decode` APRS lines, TCP 50001 |
+| FLARM device | `sensors/flarm.py` | NMEA `$PFLAA`/`$GPRMC`/`$GPGGA`, serial or TCP |
+
+`sensors/feeds.py` provides the reconnecting TCP/serial line reader. Pressure altitudes
+(ADS-B) are flagged `alt_ref: baro` and converted with QNH during evaluation. OGN beacons carry
+their own UTC position time, which is used instead of the receive time.
+
+Uses:
 
 1. **Cross-check**: optical track and ADS-B target within `match_tolerance_deg` → cooperative
    traffic, probably already on the EFB/FLARM display. Callout may be softened.
 2. **Ground truth for tests**: ADS-B provides real distances – used to validate the optical τ
    estimate in test flights.
 
-FLARM (868 MHz) will feed the same `TrafficTarget` structure via a second SDR and OGN tools.
+3. **Recording and evaluation**: the session recorder (`recorder/`) logs all sources next to the
+   video. `evaluate.py` projects every aircraft into the image (`CameraModel.direction_to_pixel`,
+   WGS84 look angles), matches detections and estimates the camera heading/pitch error. See
+   [recorder.md](recorder.md).
 
 ## Event log
 

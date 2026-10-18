@@ -40,6 +40,7 @@ class FrameResult:
     assessments: list[Assessment] = field(default_factory=list)
     spoken: str | None = None
     proc_ms: float = 0.0
+    candidates: list = field(default_factory=list)  # accepted by the classifier
 
 
 class CameraPipeline:
@@ -61,7 +62,7 @@ class CameraPipeline:
         for tr, a in zip(tracks, assessments):
             tr.meta["assessment"] = a
         return FrameResult(frame, len(cands), assessments,
-                           proc_ms=(time.perf_counter() - t0) * 1000)
+                           proc_ms=(time.perf_counter() - t0) * 1000, candidates=cands)
 
 
 def draw_overlay(img: np.ndarray, pipe: CameraPipeline, res: FrameResult) -> np.ndarray:

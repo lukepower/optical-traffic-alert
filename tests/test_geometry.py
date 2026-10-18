@@ -61,3 +61,15 @@ def test_wrap180():
     assert wrap180(190) == pytest.approx(-170)
     assert wrap180(-190) == pytest.approx(170)
     assert math.isclose(wrap180(0), 0)
+
+
+def test_direction_to_pixel_roundtrip():
+    from ota.config import CameraConfig
+    from ota.geometry import CameraModel
+    cam = CameraConfig(width=1280, height=720, hfov_deg=50, yaw_deg=190, pitch_deg=3, roll_deg=2)
+    m = CameraModel(cam)
+    for u, v in [(640, 360), (10, 20), (1200, 700), (300, 500)]:
+        d = m.pixel_to_direction(u, v)
+        uu, vv = m.direction_to_pixel(d.azimuth_deg, d.elevation_deg)
+        assert abs(uu - u) < 1e-6 and abs(vv - v) < 1e-6
+    assert m.direction_to_pixel(10, 0) is None  # behind the camera

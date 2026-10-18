@@ -4,6 +4,8 @@
     ota run    --video out/test.mp4 --show  # run the pipeline on a video
     ota run    --config config/default.yaml --aircraft v35a   # live cameras
     ota record --camera usb:0 --out data/raw/flight1.avi      # record raw footage
+    ota session --heading 190 --hfov 50                       # camera + ADS-B + FLARM/OGN session
+    ota evaluate <session folder>          # compare detections with ADS-B/FLARM positions
     ota probe  --camera usb:0               # what does the camera really deliver?
     ota bench                               # how fast is this machine?
     ota cameras                             # list USB cameras that OpenCV can open
@@ -12,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -76,30 +79,7 @@ def _cmd_run(args) -> int:
     return 0
 
 
-CODECS = {
-    # name: (fourcc, extension, extra VideoWriter params)
-    "mjpg": ("MJPG", ".avi", [1, 95]),   # VIDEOWRITER_PROP_QUALITY = 1, 95 %: near-lossless, cheap
-    "ffv1": ("FFV1", ".mkv", []),        # lossless, large files, more CPU
-    "mp4v": ("mp4v", ".mp4", []),        # small files, but blurs tiny targets - not for training data
-}
-
-
-def _open_writer(path: str, codec: str, fps: float, size: tuple[int, int]):
-    import cv2
-    fourcc, ext, params = CODECS[codec]
-    p = Path(path)
-    if p.suffix.lower() != ext:
-        p = p.with_suffix(ext)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    if codec == "mjpg":
-        # OpenCV's built-in MJPEG writer supports the quality parameter
-        w = cv2.VideoWriter(str(p), cv2.CAP_OPENCV_MJPEG, cv2.VideoWriter_fourcc(*fourcc), fps,
-                            size, params)
-    else:
-        w = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*fourcc), fps, size, params)
-    if not w.isOpened():
-        raise RuntimeError(f"cannot open video writer {p} with codec {codec}")
-    return w, p
+from .recorder.video import CODECS, open_writer as _open_writer  # noqa: E402
 
 
 def _cmd_record(args) -> int:
@@ -139,6 +119,79 @@ def _cmd_record(args) -> int:
     fps = n / t_last if t_last > 0 else 0
     print(f"{n} frames in {t_last:.1f}s = {fps:.1f} fps (file is tagged {args.fps} fps; "
           f"real timing in {path.with_suffix('.timestamps.csv').name})")
+    return 0
+
+
+def _cmd_session(args) -> int:
+    """Record camera + traffic into one session folder (headless version of ota-recorder)."""
+    from .recorder import SessionRecorder, SessionSettings
+
+    st = SessionSettings.load(args.settings) if args.settings else SessionSettings()
+    for name, attr in (("out", "output_dir"), ("camera", "camera_source"), ("station", "station_name"),
+                       ("lat", "lat"), ("lon", "lon"), ("elev", "elev_m"), ("heading", "cam_heading_deg"),
+                       ("pitch", "cam_pitch_deg"), ("hfov", "hfov_deg"), ("width", "width"),
+                       ("height", "height"), ("fps", "fps"), ("format", "pixel_format"),
+                       ("qnh", "qnh_hpa"), ("notes", "notes"), ("operator", "operator"),
+                       ("ogn_radius", "ogn_radius_km")):
+        v = getattr(args, name)
+        if v is not None:
+            setattr(st, attr, v)
+    if args.no_camera:
+        st.camera_enabled = False
+    if args.adsb is not None:
+        st.adsb_enabled, st.adsb_address = bool(args.adsb), args.adsb
+    if args.ogn_online is not None:
+        st.ogn_online = args.ogn_online
+    if args.ogn_local:
+        st.ogn_local, st.ogn_local_address = True, args.ogn_local
+    if args.flarm:
+        st.flarm_enabled, st.flarm_address = True, args.flarm
+
+    rec = SessionRecorder(st)
+    folder = rec.start()
+    print(f"Recording session {folder} - Ctrl+C to stop")
+    t0 = time.time()
+    try:
+        while True:
+            time.sleep(1)
+            rec.check()
+            el = time.time() - t0
+            if int(el) % 5 == 0:
+                parts = [f"{el:5.0f}s"]
+                if rec.camera:
+                    c = rec.camera.status
+                    parts.append(f"cam {c.written} frames {c.fps:.1f} fps, {c.dropped} dropped, "
+                                 f"{c.bytes / 1e9:.2f} GB")
+                for f in rec.feeds:
+                    parts.append(f"{f.name}: {'ok' if f.connected else 'offline'} {f.lines} lines")
+                parts.append(f"{len(rec.logger.keys)} aircraft")
+                print(" | ".join(parts), flush=True)
+            if args.seconds and el >= args.seconds:
+                break
+    except KeyboardInterrupt:
+        pass
+    rec.stop()
+    print(f"Done: {folder}")
+    print(json.dumps(rec.stats(), indent=2))
+    return 0
+
+
+def _cmd_evaluate(args) -> int:
+    from .evaluate import evaluate_session
+    summary, out = evaluate_session(args.session, config=args.config, stride=args.stride,
+                                    gate_deg=args.gate, auto_calibrate=not args.no_calibrate,
+                                    max_frames=args.max_frames, overlay=args.overlay)
+    print()
+    print((out / "report.md").read_text(encoding="utf-8"))
+    print(f"Results in {out}")
+    return 0
+
+
+def _cmd_synth_session(args) -> int:
+    from .synth import make_synthetic_session
+    folder = make_synthetic_session(args.out)
+    print(f"Wrote synthetic session {folder}")
+    print(f"Try: ota evaluate {folder} --overlay")
     return 0
 
 
@@ -302,6 +355,48 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--gain", type=float)
     c.add_argument("--seconds", type=float, default=0)
     c.set_defaults(func=_cmd_record)
+
+    se = sub.add_parser("session", help="record camera + ADS-B + FLARM/OGN into a session folder")
+    se.add_argument("--settings", help="settings JSON (as saved by ota-recorder)")
+    se.add_argument("--out", help="parent folder for sessions")
+    se.add_argument("--camera", help="usb:<index> or file:<video>")
+    se.add_argument("--no-camera", action="store_true", help="traffic only")
+    se.add_argument("--station")
+    se.add_argument("--lat", type=float)
+    se.add_argument("--lon", type=float)
+    se.add_argument("--elev", type=float, help="camera altitude above MSL (m)")
+    se.add_argument("--heading", type=float, help="true direction the camera looks at (deg)")
+    se.add_argument("--pitch", type=float)
+    se.add_argument("--hfov", type=float)
+    se.add_argument("--width", type=int)
+    se.add_argument("--height", type=int)
+    se.add_argument("--fps", type=float)
+    se.add_argument("--format")
+    se.add_argument("--adsb", help="dump1090 SBS address host:port ('' = off)")
+    se.add_argument("--ogn-online", action=argparse.BooleanOptionalAction, default=None)
+    se.add_argument("--ogn-radius", type=float)
+    se.add_argument("--ogn-local", help="local OGN receiver host:port (ogn-decode, port 50001)")
+    se.add_argument("--flarm", help="FLARM NMEA port, e.g. COM4@19200 or host:2000")
+    se.add_argument("--qnh", type=float)
+    se.add_argument("--operator")
+    se.add_argument("--notes")
+    se.add_argument("--seconds", type=float, default=0)
+    se.set_defaults(func=_cmd_session)
+
+    ev = sub.add_parser("evaluate", help="compare a session's video with ADS-B/FLARM positions")
+    ev.add_argument("session", help="session folder (contains session.json)")
+    ev.add_argument("--config", default="config/default.yaml")
+    ev.add_argument("--stride", type=int, default=1, help="process every n-th frame")
+    ev.add_argument("--gate", type=float, default=1.0, help="match tolerance in degrees")
+    ev.add_argument("--no-calibrate", action="store_true",
+                    help="do not estimate the camera heading/pitch correction")
+    ev.add_argument("--overlay", action="store_true", help="also write eval/overlay.mp4")
+    ev.add_argument("--max-frames", type=int)
+    ev.set_defaults(func=_cmd_evaluate)
+
+    ss = sub.add_parser("synth-session", help="create a synthetic recording session")
+    ss.add_argument("out", nargs="?", default="data/sessions")
+    ss.set_defaults(func=_cmd_synth_session)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")

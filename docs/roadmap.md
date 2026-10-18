@@ -13,9 +13,12 @@
 - [x] Training crops from the AOT dataset (`fetch_aot_crops.py`)
 - [x] Train the classifier (AOT, 82.7 % val. accuracy) and export to OpenVINO
 - [ ] Run it on the Iris Xe laptop; measure on own recordings
-- [ ] Collect own ground recordings at an airfield
-- [ ] ADS-B cross-check in the pipeline (cooperative / non-cooperative)
-- [ ] Evaluation script: event log against ADS-B ground truth
+- [x] OTA Recorder: camera + ADS-B + FLARM/OGN sessions, Windows GUI, `.exe` built by GitHub Actions
+- [x] FLARM/OGN reception: OGN APRS (online and local receiver), FLARM NMEA data port
+- [x] Evaluation tool `ota evaluate`: expected image positions from ADS-B/FLARM, detection range,
+      automatic heading/pitch correction, auto-labelled crops, overlay video
+- [ ] Collect own ground recordings at an airfield (club members with OTA Recorder)
+- [ ] ADS-B cross-check in the live pipeline (cooperative / non-cooperative)
 
 ## Phase 2 – flight system on a Jetson
 
@@ -30,7 +33,11 @@
 
 - [ ] Targets below the horizon (terrain background, motion compensation)
 - [ ] Temporal classifier (motion pattern: bird vs. aircraft) – main weakness of the frame classifier
-- [ ] FLARM reception (868 MHz, OGN) in the fusion
+- [ ] FLARM/OGN traffic in the live fusion (reception itself is done, see phase 1)
+- [ ] **ADS-L** (EASA SRD-860 standard): verify that ADS-L beacons arrive via OGN receivers and the
+      APRS feed; otherwise add a decoder
+- [ ] GDL 90 *input* (e.g. from a Stratux with 1090 + 868 MHz sticks) as one more traffic source
+- [ ] In-flight evaluation with attitude (IMU) instead of GPS track only
 - [ ] **EFB output**: Wi-Fi access point with **GDL 90** (UDP 4000; ForeFlight, SkyDemon, EasyVFR,
       Enroute, Airmate …) and **FLARM NMEA** (TCP 2000; XCSoar, Air Navigation Pro, SkyDemon via BLE).
       Ownship from GNSS, ADS-B/FLARM traffic from the SDRs, optical targets with an estimated position

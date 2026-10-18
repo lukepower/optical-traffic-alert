@@ -9,37 +9,44 @@ landscape the system will have to work with.
 the aerodrome operator's permission. Arriving traffic is ideal test material: a target coming
 straight at the camera and growing – exactly the collision geometry.
 
+Use the **OTA Recorder** ([recorder.md](recorder.md)): it records the video together with ADS-B,
+FLARM and OGN positions and the station/camera geometry into one session folder. The headless
+equivalent is
+
 ```powershell
-ota record --camera usb:0 --width 3840 --height 2160 --fps 15 --out data\raw\lipb_2026-10-20_rwy19 --seconds 600
+ota session --station LIPB --lat 46.4603 --lon 11.3264 --elev 241 --heading 190 --pitch 3 --hfov 50 --qnh 1018 --seconds 1800
 ```
 
-`ota record` writes near-lossless MJPEG (`.avi`) plus a `.timestamps.csv` with the real frame
-times. 4K at 15 fps is roughly 1–2 GB per minute – use a fast SSD.
+Video-only recording is still possible with `ota record` (near-lossless MJPEG plus a
+`.timestamps.csv`). 4K at 15 fps is roughly 1–2 GB per minute, so use a fast SSD.
 
-For every recording note (e.g. in `data/raw/README.md`, not in the repository):
-
-* date, time, location, viewing direction
-* lens / field of view
-* weather, sun position
-* known movements (time, registration) – recording ADS-B in parallel is ideal
+Note weather, sun position and anything notable (non-cooperative traffic, birds) in the
+*Notes* field.
 
 ## In flight (phase 1: laptop as recorder)
 
 * Fix the camera behind the windscreen, with a sun shade.
 * Stow the laptop securely; nothing may come loose in turbulence.
 * Record only, no warnings – evaluation happens on the ground.
-* Record ADS-B in parallel (dump1090 logs) for ground truth.
+* Record traffic in parallel (OTA Recorder in *aircraft* mode, with the FLARM data port for the own
+  position) for ground truth.
 * Operation must not interfere with flying: start recording before engine start, stop after shutdown.
 
 ## Evaluation
 
 ```powershell
-ota run --video data\raw\flight1.avi --hfov 50 --record out\flight1_overlay.mp4
+ota evaluate D:\OTA-Sessions\20261020-074512Z_LIPB --overlay
 ```
 
-* Watch `out\flight1_overlay.mp4`: were the known aircraft found? When?
-* Compare `out\events.jsonl` with ADS-B data: are clock positions right, how good is τ?
-* Save false candidates (reflections, cloud edges) as `background` crops for training.
+* `eval/report.md`: detection range per aircraft, probability of detection by range, angular
+  error, corrected camera heading/pitch
+* `eval/overlay.mp4`: expected positions (yellow) vs. detections (green / magenta = no cooperative
+  aircraft)
+* `eval/crops/aircraft/`: auto-labelled aircraft crops from our own camera → training data
+* `eval/crops/review/`: tracks without a cooperative aircraft → label by hand (non-cooperative
+  aircraft, bird, background)
+
+For a plain video without traffic data, `ota run --video … --record overlay.mp4` still works.
 
 ## Privacy
 

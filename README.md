@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/logo.png" width="260" alt="Optical Traffic Alert"></p>
+
 # Optical Traffic Alert
 
 **Camera-based collision warning for light aircraft** – cameras in the cockpit, a compact AI box
@@ -82,6 +84,17 @@ Callouts:
 
 Full setup including USB camera, RTL-SDR and intercom: [docs/setup-windows.md](docs/setup-windows.md).
 
+## Help collect data: OTA Recorder
+
+**OTA Recorder** is a simple Windows program for club members. It records the camera together with
+ADS-B, FLARM and OGN positions. From these recordings `ota evaluate` measures detection range
+automatically, because the position data tells exactly where each aircraft was. Download
+`OTA-Recorder-windows.zip` from the [releases](https://github.com/lukepower/optical-traffic-alert/releases);
+no Python is needed. Guide: [docs/recorder.md](docs/recorder.md) (German:
+[docs/recorder.de.md](docs/recorder.de.md)).
+
+<img src="docs/images/recorder-screenshot.png" width="640" alt="OTA Recorder">
+
 ## Commands
 
 | Command | Purpose |
@@ -90,6 +103,10 @@ Full setup including USB camera, RTL-SDR and intercom: [docs/setup-windows.md](d
 | `ota run --video file.mp4 [--show] [--record out.mp4]` | run the pipeline on a video |
 | `ota run --aircraft v35a` | live, with the cameras from the aircraft profile |
 | `ota record --camera usb:0 --out data/raw/flight1.avi` | record raw video, near-lossless (data collection) |
+| `ota session --heading 190 --hfov 50` | record camera + ADS-B + FLARM/OGN into a session folder (headless recorder) |
+| `ota evaluate <session> [--overlay]` | compare a session's detections with ADS-B/FLARM positions: range, accuracy, heading correction |
+| `ota synth-session` | create a synthetic session to try `ota evaluate` |
+| `ota-recorder` | the recorder window (same as `OTA-Recorder.exe`) |
 | `ota probe --camera usb:0` | test which resolutions/formats/fps a camera really delivers |
 | `ota bench` | measure processing speed on this machine at 4K |
 | `ota cameras` | list connected USB cameras |
@@ -113,6 +130,11 @@ src/ota/
   tracking/threat.py        collision logic: bearing rate, growth, τ
   audio/announcer.py        callouts + speech output (console, Windows SAPI, Piper)
   sensors/adsb.py           ADS-B via dump1090/readsb (SBS-1, port 30003)
+  sensors/ogn.py            FLARM/OGN via the OGN APRS feed (online or local receiver)
+  sensors/flarm.py          FLARM device data port (NMEA $PFLAA)
+  sensors/traffic.py        common traffic record, geodesy (look angles)
+  recorder/                 session recorder + Windows GUI (OTA Recorder)
+  evaluate.py               session evaluation against ADS-B/FLARM ground truth
   sensors/imu.py            IMU (BNO085 via USB microcontroller)
   geometry.py               pixel → azimuth/elevation → clock position, high/low
   pipeline.py               wiring, overlay, event log
@@ -123,6 +145,7 @@ tools/
   extract_aot_crops.py      same, from a local copy of the AOT dataset
   train_classifier.py       train the classifier + export to OpenVINO
   train_windows.bat/.ps1    one-click GPU training on Windows
+packaging/                  PyInstaller build of OTA-Recorder.exe (also run by GitHub Actions)
 tests/                      pytest, incl. end-to-end test on a synthetic video
 docs/                       documentation (see below)
 ```
@@ -137,6 +160,7 @@ docs/                       documentation (see below)
 | [docs/calibration.md](docs/calibration.md) | mounting and calibrating cameras, aircraft profiles |
 | [docs/hardware.md](docs/hardware.md) | hardware, power supply, EMC, bill of materials |
 | [docs/data-collection.md](docs/data-collection.md) | own recordings on the ground and in flight |
+| [docs/recorder.md](docs/recorder.md) | OTA Recorder guide for club members, session format, evaluation |
 | [docs/roadmap.md](docs/roadmap.md) | phases and next steps |
 | [docs/safety-and-legal.md](docs/safety-and-legal.md) | limits, liability, EASA considerations |
 
