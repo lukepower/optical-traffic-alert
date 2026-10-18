@@ -31,6 +31,7 @@ classifier:
   crop_px: 64
   aircraft_class: 0
   min_probability: 0.3     # keeps ~83 % of aircraft crops, passes ~3.5 % of background
+  grayscale: true          # AOT training data is monochrome; colour cameras are converted
 
 tracker:
   gate_px: 40

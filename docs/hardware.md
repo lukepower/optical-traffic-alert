@@ -15,6 +15,26 @@ The full bill of materials with prices (October 2026, EUR) is in
 
 This is enough to develop and ground-test the whole pipeline for about €150–250.
 
+## Camera requirements
+
+What matters is not the megapixel count but the **angular resolution**: how many pixels cover one
+degree of the sky. A distant aircraft must still be 3–5 pixels wide.
+
+| Property | Requirement | Why |
+|---|---|---|
+| Resolution | 3840 × 2160 (8 MP, "4K") or more | together with the lens: ≥ 60 px per degree |
+| Field of view | 50–60° horizontal (exchangeable M12 or CS lens) | 3840 px / 60° = 64 px/°; wide-angle lenses (90–120°) waste range |
+| Sensor | Sony STARVIS 2 or similar, pixel size ≥ 1.5 µm (e.g. IMX678, IMX585, IMX415, IMX477) | contrast of tiny targets in haze |
+| Colour / mono | **either**; mono is better (more light per pixel, no demosaicing) | the pipeline works on grey anyway; the classifier converts colour crops to grey (`classifier.grayscale`) |
+| Shutter | **rolling shutter is fine** | global shutter at 4K is expensive; use a short, fixed exposure (< 1 ms in daylight) |
+| Interface | USB 3.0 UVC, uncompressed (YUY2) preferred; USB 2.0 MJPEG acceptable for tests | compression blurs targets of a few pixels |
+| Frame rate | ≥ 10 fps at 4K | collision geometry is evaluated over seconds |
+| Focus | fixed / manual, set to infinity – no autofocus | autofocus hunts on an empty sky |
+| Controls | manual exposure and gain via UVC | avoid auto-exposure pumping against bright sky |
+
+Lens focal length for 50–60° HFOV depends on the sensor width: about 6–8 mm for a 1/1.8" sensor
+(IMX678), about 10–12 mm for a 1/1.2" sensor (IMX585).
+
 ## Phase 2 – flight system
 
 | Component | Example | Note |

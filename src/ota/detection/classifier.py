@@ -69,6 +69,12 @@ class OpenVinoClassifier(Classifier):
         batch = []
         for c in candidates:
             patch = crop(image, c, s)
+            if self.cfg.grayscale and patch.ndim == 3:
+                # The AOT training data is monochrome: feed colour cameras the
+                # same way (grey replicated to 3 channels) so they match it.
+                patch = cv2.cvtColor(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+            elif patch.ndim == 2:
+                patch = cv2.cvtColor(patch, cv2.COLOR_GRAY2BGR)
             patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             batch.append(patch.transpose(2, 0, 1))
         accepted = []

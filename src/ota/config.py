@@ -94,6 +94,9 @@ class ClassifierConfig:
     # Low on purpose: the tracker filters as well, and dropping a real aircraft
     # is worse than letting a bird through (see docs/training.md, evaluation).
     min_probability: float = 0.3
+    # Convert crops to grey before classification (the AOT training data is
+    # monochrome). Keep true for colour cameras unless the model was trained on colour.
+    grayscale: bool = True
 
 
 @dataclass
