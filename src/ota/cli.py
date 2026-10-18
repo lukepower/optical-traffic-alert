@@ -153,6 +153,8 @@ def _cmd_session(args) -> int:
         st.gps_enabled, st.gps_address = True, args.gps
     if args.mode:
         st.mode = args.mode
+    if args.imu:
+        st.imu_enabled, st.imu_address = True, args.imu
     if args.own_icao:
         st.own_icao = args.own_icao
     if args.record_mode:
@@ -269,6 +271,44 @@ def _cmd_dataset(args) -> int:
     ar.close()
     print(json.dumps(counts, indent=2))
     print(f"Train with: python tools/train_classifier.py --data {args.out}")
+    return 0
+
+
+def _cmd_imu_check(args) -> int:
+    """Live view of a WitMotion IMU: check the port, the rate and the axis directions."""
+    import math
+    from .sensors.feeds import LineFeed
+    from .sensors.witmotion import WitMotionParser
+    parser = WitMotionParser()
+    state = {"n": 0, "last": None}
+
+    def on_data(data: bytes, rx: float) -> None:
+        for smp in parser.feed(data, rx):
+            state["n"] += 1
+            state["last"] = smp
+
+    feed = LineFeed("IMU", args.port, on_data, binary=True).start()
+    print("Tilt the camera nose UP: 'pitch' must become positive. Lower the RIGHT side: 'roll' "
+          "positive. Ctrl+C to stop.\n")
+    t0, n0 = time.time(), 0
+    try:
+        while True:
+            time.sleep(0.5)
+            s = state["last"]
+            if s is None:
+                print(f"  no data yet ({feed.error or 'waiting'})", end="\r")
+                continue
+            # our convention from the accelerometer (valid when the camera is still)
+            pitch = math.degrees(math.atan2(s.ax, math.hypot(s.ay, s.az)))
+            roll = math.degrees(math.atan2(s.ay, s.az))
+            rate = (state["n"] - n0) / (time.time() - t0)
+            t0, n0 = time.time(), state["n"]
+            print(f"  pitch {pitch:+6.1f}  roll {roll:+6.1f}  |  gyro {s.gx:+7.1f} {s.gy:+7.1f} "
+                  f"{s.gz:+7.1f} deg/s  |  {rate:5.0f} Hz  bad packets {parser.bad}   ", end="\r")
+    except KeyboardInterrupt:
+        pass
+    feed.stop()
+    print()
     return 0
 
 
@@ -456,6 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     se.add_argument("--flarm", help="FLARM NMEA port, e.g. COM4@19200 or host:2000")
     se.add_argument("--gps", help="GPS receiver NMEA port for the own position, e.g. COM5@9600")
     se.add_argument("--mode", choices=["ground", "aircraft"])
+    se.add_argument("--imu", help="WitMotion attitude sensor port, e.g. COM6@115200")
     se.add_argument("--own-icao", help="own transponder address (hex), excluded from traffic")
     se.add_argument("--record-mode", choices=["smart", "all"])
     se.add_argument("--qnh", type=float)
@@ -515,6 +556,10 @@ def build_parser() -> argparse.ArgumentParser:
     ds.add_argument("--out", default="data/crops_own")
     ds.add_argument("--val", type=float, default=0.2)
     ds.set_defaults(func=_cmd_dataset)
+
+    ic = sub.add_parser("imu-check", help="live view of the attitude sensor (axes, rate)")
+    ic.add_argument("--port", default="COM6@115200")
+    ic.set_defaults(func=_cmd_imu_check)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")

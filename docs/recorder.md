@@ -75,7 +75,7 @@ camera's field of view are highlighted in yellow.
 * **Preview** – shows the image and a **sharpness** value. Focus on something far away (mountains,
   clouds) and turn the focus ring until the value is at its maximum. Then do not touch the lens again.
 
-### Tab "Traffic data"
+### Tab "Traffic & sensors"
 
 * **ADS-B (dump1090)** – address of dump1090's SBS output, normally `127.0.0.1:30003`. If you
   enter the path of `dump1090.exe`, the recorder starts it and stops it at the end.
@@ -198,7 +198,10 @@ Recording in flight works the same way, with three differences:
 2. **Own position** is required: a USB GPS receiver (any u-blox "GPS mouse", ~€20) under
    *GPS receiver*, or the aircraft's FLARM data port under *FLARM device*. The status shows the
    own position. Without it there is no evaluation.
-3. Enter the **own transponder address** (ICAO hex, e.g. from the registration certificate or
+3. Optional but recommended: an **attitude sensor** (WitMotion IMU, see
+   [hardware.md](hardware.md#test-kit-gps-and-attitude-sensor)) fixed to the camera, under
+   *Attitude sensor on the camera*. With it, turns are evaluated too, not left out.
+4. Enter the **own transponder address** (ICAO hex, e.g. from the registration certificate or
    any ADS-B app). Otherwise the own ADS-B/FLARM signal shows up as traffic at 0 km. The recorder
    also ignores anything closer than 300 m.
 
@@ -219,9 +222,9 @@ Practical rules:
   in flight.
 
 Evaluation: the camera direction is taken relative to the GPS track. A constant wind correction
-angle is absorbed by the automatic heading correction. The aircraft's attitude is not known yet,
-so frames while turning (more than 3°/s) are left out. An attitude sensor (IMU) is on the
-roadmap.
+angle is absorbed by the automatic heading correction. With the attitude sensor, the camera
+attitude is known for every frame, including turns. Without it, frames while turning (more than
+3°/s) are left out.
 
 ## Privacy and rules
 

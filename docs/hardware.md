@@ -36,6 +36,29 @@ degree of the sky. A distant aircraft must still be 3–5 pixels wide.
 Lens focal length for 50–60° HFOV depends on the sensor width: about 6–8 mm for a 1/1.8" sensor
 (IMX678), about 10–12 mm for a 1/1.2" sensor (IMX585).
 
+### Test kit: GPS and attitude sensor
+
+For in-flight tests with the laptop recorder:
+
+| Component | Example | approx. price | Why |
+|---|---|---|---|
+| USB GPS receiver | any u-blox USB "GPS mouse" (e.g. VK-172 with u-blox 7, or an M8/M10 USB puck) | €15–40 | own position and track; NMEA, appears as a COM port |
+| Attitude sensor (IMU) | **WitMotion WT901C / HWT901B with USB** (or TTL version + USB-TTL adapter) | €30–70 | camera attitude in turns; up to 200 Hz, ready-made, no soldering |
+
+**Mount the IMU rigidly on the camera bracket**: X axis (arrow on the module) along the optical axis,
+Z axis up in the image. Then it measures the **camera's** attitude, including how the mount
+sits in the aircraft. Set it once to 100–200 Hz and 115200 baud with the WitMotion PC software.
+Check axes and signs with `ota imu-check --port COM6@115200`: tilting the camera nose up must give
+positive pitch, lowering its right side must give positive roll.
+
+The module's own roll/pitch are not used for the evaluation. Like any gravity-referenced AHRS, it
+slowly "levels" in a sustained coordinated turn. The evaluation computes the attitude from the raw
+gyro and accelerometer data, corrected with the GPS velocity, and holds the bank angle correctly
+([architecture.md](architecture.md#camera-attitude-in-flight-imu--gps)).
+
+Without a magnetometer the IMU has no heading of its own. The heading comes from the GPS track; a
+constant wind correction angle is absorbed by the automatic heading correction.
+
 ## Phase 2 – flight system
 
 | Component | Example | Note |

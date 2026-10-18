@@ -31,7 +31,7 @@ jobs:
           pip install . pyserial boto3 pyinstaller pytest "moto[server]"
 
       - name: Unit tests (feeds, geometry, upload, ingest, review)
-        run: pytest -q tests/test_traffic_feeds.py tests/test_geometry.py tests/test_upload.py tests/test_ingest.py
+        run: pytest -q tests/test_traffic_feeds.py tests/test_geometry.py tests/test_upload.py tests/test_ingest.py tests/test_attitude.py
 
       - name: Build exe
         run: >

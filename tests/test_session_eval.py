@@ -191,3 +191,51 @@ def test_traffic_trigger_ignores_own_aircraft_and_far_targets():
     assert sorted(hits) == ["icao:BEHIND", "icao:NEAR22"]
     assert traffic_in_view(tab, own, 0.0, 0.0, 50.0, 16 / 9, 15.0, now=now,
                            exclude={"NEAR22"}) == []
+
+
+def test_in_flight_with_imu_keeps_turns(tmp_path):
+    from ota.synth import make_synthetic_flight_session
+    folder = make_synthetic_flight_session(tmp_path, duration_s=30.0, crab_deg=3.0, imu=True)
+    ev = SessionEvaluator(folder, save_crops=False)
+    s = ev.run()
+    out = ev.write_outputs(s)
+    assert s["imu"]["used"].startswith("attitude")
+    assert s["frames_excluded"].get("turning", 0) == 0          # turns are usable with an IMU
+    t = s["targets"][0]
+    assert t["tracked_pct"] > 85 and t["median_error_deg"] < 0.3
+    assert abs(s["camera_corrected"]["heading_deg"] + 3.0) < 1.5  # crab absorbed
+    assert "IMU" in (out / "report.md").read_text()
+
+
+def test_recorder_logs_imu_from_binary_feed(session, tmp_path):
+    from ota.recorder import SessionRecorder, SessionSettings
+    from ota.sensors.witmotion import ImuSample, encode_sample
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    port = srv.getsockname()[1]
+
+    def serve():
+        c, _ = srv.accept()
+        pkt = encode_sample(ImuSample(0, 0.05, 0.0, 0.99, 0.1, 0.2, 0.3, 2.5, -1.0, 90.0))
+        for _ in range(100):
+            c.sendall(pkt * 5)  # bursts of 5 samples
+            time.sleep(0.02)
+        time.sleep(5)
+        c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    st = SessionSettings(output_dir=str(tmp_path), station_name="IMU", camera_enabled=False,
+                         adsb_enabled=False, ogn_online=False, imu_enabled=True,
+                         imu_address=f"127.0.0.1:{port}")
+    rec = SessionRecorder(st)
+    folder = rec.start()
+    time.sleep(3.0)
+    assert rec.imu.latest is not None and rec.imu.latest.roll == pytest.approx(2.5, abs=0.01)
+    rec.stop()
+    srv.close()
+    rows = (folder / "imu.csv").read_text().splitlines()
+    assert rows[0].startswith("t_wall,ax") and len(rows) - 1 == 500
+    meta = json.loads((folder / "session.json").read_text())
+    assert meta["stats"]["imu"]["samples"] == 500 and meta["traffic_sources"]["imu"]

@@ -29,7 +29,7 @@ Python oder andere Programme sind nicht nötig.
      Kamera über Meer, **QNH** aus dem METAR.
    * **Kamera:** **Blickrichtung** in Grad (Handykompass plus etwa 3–4°; ungefähr genügt, die
      Auswertung korrigiert sie), **Neigung** nach oben, **Bildwinkel**.
-   * **Verkehrsdaten:** ADS-B `127.0.0.1:30003`, „FLARM/OGN aus dem Internet“ ein, FLARM-Gerät
+   * **Verkehr & Sensoren:** ADS-B `127.0.0.1:30003`, „FLARM/OGN aus dem Internet“ ein, FLARM-Gerät
      falls vorhanden (z. B. `COM4@19200`).
    * **Aufnahme:** „Nur bei Verkehr/Bewegung“ lassen (spart 80–90 % Speicher). Häkchen bei
      „Auch bei Bewegung im Bild“ lassen, damit auch Flugzeuge ohne FLARM erfasst werden.

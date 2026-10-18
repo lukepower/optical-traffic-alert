@@ -47,7 +47,7 @@ from .config import CameraConfig, Config, load_config
 from .detection.candidates import crop as crop_candidate
 from .geometry import CameraModel, wrap180
 from .pipeline import CameraPipeline
-from .sensors.traffic import TrafficReport, look_angles, pressure_to_qnh_altitude
+from .sensors.traffic import TrafficReport, enu, look_angles, pressure_to_qnh_altitude
 from .sources import Frame
 
 log = logging.getLogger(__name__)
@@ -205,6 +205,7 @@ class SessionEvaluator:
         self.max_turn_dps = 3.0
         self.excluded: dict[str, set] = defaultdict(set)
         self.targets, self.own = load_traffic(self.dir / "traffic.jsonl", self.qnh)
+        self._setup_imu()
         self.stamps = load_timestamps(self.dir / cam.get("timestamps", "camera/cam0.timestamps.csv"))
         if cam.get("segment_files"):
             self.segment_files = {int(k): v for k, v in cam["segment_files"].items()}
@@ -224,10 +225,44 @@ class SessionEvaluator:
     # -- geometry --
 
     def camera_model(self, d_az: float = 0.0, d_el: float = 0.0) -> CameraModel:
-        """Camera model with a correction added to the entered heading/pitch."""
+        """Camera model with a correction added to the entered heading/pitch.
+
+        With an IMU on the camera in flight, directions are computed in the IMU body
+        frame (X = optical axis), so the base orientation is zero and only the
+        mounting correction remains."""
+        if self.use_imu:
+            return CameraModel(CameraConfig(name="cam0", width=self.width, height=self.height,
+                                            hfov_deg=self.hfov, yaw_deg=d_az, pitch_deg=d_el))
         return CameraModel(CameraConfig(name="cam0", width=self.width, height=self.height,
                                         hfov_deg=self.hfov, yaw_deg=self.heading + d_az,
                                         pitch_deg=self.pitch + d_el, roll_deg=self.roll))
+
+    def _setup_imu(self) -> None:
+        """Attitude from imu.csv (camera-mounted IMU), if the session has one."""
+        from .attitude import GpsAid, estimate_attitude, load_imu_csv
+        self.attitude = None
+        self.use_imu = False
+        self.imu_info: dict = {}
+        path = self.dir / "imu.csv"
+        if not path.exists():
+            return
+        imu = load_imu_csv(path)
+        if len(imu) < 50:
+            return
+        rate = (len(imu) - 1) / max(imu[-1, 0] - imu[0, 0], 1e-6)
+        if self.mode == "aircraft":
+            self.attitude = estimate_attitude(imu, GpsAid.from_reports(self.own))
+            self.use_imu = bool(self.attitude.valid.any())
+            self.imu_info = {"samples": len(imu), "rate_hz": round(float(rate), 1),
+                             "used": "attitude per frame (GPS-aided)" if self.use_imu else "no"}
+        else:
+            att = estimate_attitude(imu, None)
+            pr = att.static_pitch_roll()
+            if pr:
+                self.imu_info = {"samples": len(imu), "rate_hz": round(float(rate), 1),
+                                 "used": "camera pitch/roll", "entered_pitch_deg": self.pitch,
+                                 "imu_pitch_deg": round(float(pr[0]), 2), "imu_roll_deg": round(float(pr[1]), 2)}
+                self.pitch, self.roll = pr
 
     def _own_arrays(self):
         if not hasattr(self, "_own"):
@@ -366,6 +401,25 @@ class SessionEvaluator:
             self.excluded["no_own_position"].add(fd.index)
             return
         (la0, lo0, al0), az_ref, turn = obs
+        if self.use_imu:
+            from .attitude import body_angles
+            R = self.attitude.at(fd.t)
+            if R is None:
+                self.excluded["no_attitude"].add(fd.index)
+                return
+            for key, tt in self.targets.items():
+                if tt.key.split(":")[-1] == self.own_icao:
+                    continue
+                p = tt.at(fd.t)
+                if p is None:
+                    continue
+                d = np.array(enu(la0, lo0, al0, *p))
+                rng = float(np.linalg.norm(d))
+                if rng < 300.0:
+                    continue
+                az, el = body_angles(R, d)
+                yield key, az, el, rng, model.direction_to_pixel(az, el)
+            return
         if abs(turn) > self.max_turn_dps:
             # banked: camera attitude unknown, directions unreliable
             self.excluded["turning"].add(fd.index)
@@ -529,6 +583,7 @@ class SessionEvaluator:
             "ogn_latency_s": lat,
             "mode": self.mode,
             "frames_excluded": {k: len(v) for k, v in self.excluded.items()},
+            "imu": self.imu_info,
         }
 
     def _ogn_latency(self) -> float | None:
@@ -641,6 +696,11 @@ def render_report(s: dict) -> str:
              f"* estimated correction: heading {c['heading_deg']:+.2f}°, pitch {c['pitch_deg']:+.2f}° "
              f"from {c['pairs']} matches ({'applied' if c['applied'] else 'not applied – too few matches'})"
              f" → heading {s['camera_corrected']['heading_deg']}°, pitch {s['camera_corrected']['pitch_deg']}°"]
+    if s.get("imu"):
+        lines.append(f"* IMU: {s['imu'].get('samples')} samples at {s['imu'].get('rate_hz')} Hz, used for "
+                     f"{s['imu'].get('used')}"
+                     + (f" (pitch {s['imu']['imu_pitch_deg']}°, roll {s['imu']['imu_roll_deg']}°)"
+                        if 'imu_pitch_deg' in s['imu'] else ""))
     if s.get("mode") == "aircraft":
         ex = s.get("frames_excluded") or {}
         lines.append(f"* in-flight session: camera direction relative to the GPS track; frames excluded "

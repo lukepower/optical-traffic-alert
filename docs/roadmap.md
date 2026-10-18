@@ -29,7 +29,8 @@
 
 - [ ] GMSL2 source via GStreamer, one capture thread per camera
 - [ ] Classifier on TensorRT
-- [ ] IMU integration: own rotation, high/low relative to the horizon
+- [ ] IMU in the live pipeline: own rotation, high/low relative to the horizon (recording and
+      evaluation already use it)
 - [ ] Automatic calibration of camera attitude from horizon + IMU
 - [ ] Power supply, enclosure, EMC test
 - [ ] First flight tests as a pure recorder, then with callouts
@@ -42,7 +43,7 @@
 - [ ] **ADS-L** (EASA SRD-860 standard): verify that ADS-L beacons arrive via OGN receivers and the
       APRS feed; otherwise add a decoder
 - [ ] GDL 90 *input* (e.g. from a Stratux with 1090 + 868 MHz sticks) as one more traffic source
-- [ ] In-flight evaluation with attitude (IMU) instead of GPS track only
+- [x] In-flight evaluation with attitude: camera-mounted WitMotion IMU, GPS-aided attitude filter
 - [ ] **EFB output**: Wi-Fi access point with **GDL 90** (UDP 4000; ForeFlight, SkyDemon, EasyVFR,
       Enroute, Airmate …) and **FLARM NMEA** (TCP 2000; XCSoar, Air Navigation Pro, SkyDemon via BLE).
       Ownship from GNSS, ADS-B/FLARM traffic from the SDRs, optical targets with an estimated position

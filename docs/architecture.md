@@ -210,6 +210,22 @@ Uses:
    WGS84 look angles), matches detections and estimates the camera heading/pitch error. See
    [recorder.md](recorder.md).
 
+## Camera attitude in flight (IMU + GPS)
+
+`attitude.py` estimates the attitude of a camera-mounted IMU offline, for the evaluation. It is a
+Mahony-type complementary filter over the raw gyro and accelerometer samples (`imu.csv`):
+
+* gyro integration, with on-line bias estimation (integral term)
+* tilt correction towards the measured specific force, compared with the **expected** specific force
+  `a_GPS − g`. In a coordinated turn the centripetal acceleration comes from the GPS velocity, so
+  the bank angle does not decay as in a gravity-only AHRS. In the synthetic test it stays within
+  2° at 28° bank.
+* heading correction towards the GPS track above 15 m/s
+
+With an IMU, the evaluation computes target directions in the IMU/camera body frame per frame
+(`body_angles`) instead of excluding turns. Without an IMU, frames turning faster than 3°/s are
+excluded. On the ground the IMU replaces the entered camera pitch/roll by the measured ones.
+
 ## Event log
 
 `output.event_log` (default `out/events.jsonl`), one JSON line per event:

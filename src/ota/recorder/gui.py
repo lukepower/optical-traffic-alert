@@ -67,6 +67,11 @@ TEXT = {
     "own_icao": ("Eigener Transponder (ICAO hex)", "Proprio transponder (ICAO hex)",
                  "Own transponder (ICAO hex)"),
     "own_pos": ("Eigene Position", "Posizione propria", "Own position"),
+    "imu": ("Lagesensor an der Kamera (WitMotion)", "Sensore d'assetto sulla camera (WitMotion)",
+            "Attitude sensor on the camera (WitMotion)"),
+    "attitude": ("Lage", "Assetto", "Attitude"),
+    "pitch_s": ("Längsneigung", "beccheggio", "pitch"),
+    "roll_s": ("Querneigung", "rollio", "roll"),
     "no_fix": ("keine – GPS/FLARM prüfen", "nessuna – controllare GPS/FLARM", "none – check GPS/FLARM"),
     "pitch": ("Neigung nach oben (°)", "Inclinazione verso l'alto (°)", "Tilt up (°)"),
     "hfov": ("Bildwinkel horizontal (°)", "Angolo orizzontale (°)", "Horizontal field of view (°)"),
@@ -84,7 +89,7 @@ TEXT = {
     "trig_none": ("–", "–", "–"),
     "preview": ("Vorschau", "Anteprima", "Preview"),
     "preview_stop": ("Vorschau aus", "Anteprima off", "Stop preview"),
-    "traffic": ("Verkehrsdaten", "Dati traffico", "Traffic data"),
+    "traffic": ("Verkehr & Sensoren", "Traffico e sensori", "Traffic & sensors"),
     "adsb": ("ADS-B (dump1090)", "ADS-B (dump1090)", "ADS-B (dump1090)"),
     "dump1090": ("dump1090.exe starten (optional)", "avvia dump1090.exe (opzionale)",
                  "start dump1090.exe (optional)"),
@@ -387,6 +392,13 @@ class RecorderApp:
                      textvariable=self.var("gps_address", s.gps_address), width=16).grid(
             row=r, column=1, sticky="ew", padx=(0, 6))
         r += 1
+        ttk.Checkbutton(f, text=self.t("imu"),
+                        variable=self.var("imu_enabled", s.imu_enabled, tk.BooleanVar)).grid(
+            row=r, column=0, sticky="w", padx=6)
+        ttk.Combobox(f, values=[f"{p}@115200" for p in serial_ports] or ["COM6@115200"],
+                     textvariable=self.var("imu_address", s.imu_address), width=16).grid(
+            row=r, column=1, sticky="ew", padx=(0, 6))
+        r += 1
         ttk.Label(f, text=self.t("own_icao")).grid(row=r, column=0, sticky="w", padx=6)
         self.entry(f, "own_icao", s.own_icao, 10).grid(row=r, column=1, sticky="w", padx=(0, 6))
 
@@ -476,11 +488,11 @@ class RecorderApp:
             s.upload_code = "".join(str(v["upload_code"]).split())
             for name in ("operator", "station_name", "notes", "output_dir", "camera_source",
                          "pixel_format", "adsb_address", "dump1090_path", "ogn_local_address",
-                         "flarm_address", "gps_address", "own_icao"):
+                         "flarm_address", "gps_address", "own_icao", "imu_address"):
                 setattr(s, name, str(v[name]).strip())
             s.record_mode = self._recmodes.get(v["record_mode"], "smart")
             for name in ("camera_enabled", "adsb_enabled", "ogn_online", "ogn_local", "flarm_enabled",
-                         "motion_trigger", "gps_enabled"):
+                         "motion_trigger", "gps_enabled", "imu_enabled"):
                 setattr(s, name, bool(v[name]))
             s.mode = self._modes.get(v["mode"], "ground")
             fields = {"lat": "lat", "lon": "lon", "elev_m": "elev", "qnh_hpa": "qnh", "fps": "fps",
@@ -840,6 +852,10 @@ class RecorderApp:
                 dot = "●" if ok else "○"
                 lines.append(f"{dot} {f.name:<13} {state:<16} {f.lines:7d} {self.t('lines')}"
                              + (f"  ({f.error})" if f.error and not f.connected else ""))
+            if rec.imu and rec.imu.latest:
+                m = rec.imu.latest
+                lines.append(f"{self.t('attitude')}: {self.t('pitch_s')} {m.pitch:+5.1f}°  "
+                             f"{self.t('roll_s')} {m.roll:+5.1f}°  ({rec.imu.rate_hz:.0f} Hz)")
             if rec.s.mode == "aircraft" and rec.logger:
                 own = rec.logger.table.ownship()
                 if own and own.lat is not None and now - own.rx < 10:

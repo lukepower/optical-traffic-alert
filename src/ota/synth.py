@@ -273,68 +273,79 @@ def make_synthetic_session(parent: str | Path, width: int = 1280, height: int = 
 
 def make_synthetic_flight_session(parent: str | Path, width: int = 1280, height: int = 720,
                                   fps: float = 8.0, duration_s: float = 30.0, crab_deg: float = 3.0,
-                                  seed: int = 5) -> Path:
+                                  seed: int = 5, imu: bool = False) -> Path:
     """In-flight session: own aircraft flies north at 50 m/s, camera looks along the nose.
 
     * own position comes as GPS NMEA ($GPRMC/$GPGGA) through the real parser;
       the GPS track differs from the nose heading by ``crab_deg`` (wind)
     * ``4CA2D6`` (ADS-B) approaches head-on, slightly higher -> drawn
-    * from 18 s to 23 s the own aircraft turns at 6 deg/s -> those frames must be excluded
+    * from 18 s to 26 s a coordinated right turn (up to 6 deg/s, ~28 deg bank)
+    * ``imu=True``: a camera-mounted WitMotion IMU (100 Hz, with gyro bias) is
+      simulated and its binary packets go through the real parser into imu.csv
     """
     import datetime as dt
 
+    from .attitude import G, body_angles, rotation
     from .config import CameraConfig
     from .geometry import CameraModel
     from .recorder.video import open_writer
     from .sensors.adsb import SbsParser, sbs_report
     from .sensors.flarm import FlarmNmeaParser
-    from .sensors.traffic import look_angles, offset_position
+    from .sensors.traffic import enu, offset_position
+    from .sensors.witmotion import ImuSample, WitMotionParser, encode_sample
 
     rng = np.random.default_rng(seed)
     lat0, lon0, alt0 = 46.30, 11.30, 1500.0
     t0 = dt.datetime(2026, 10, 21, 9, 0, 0, tzinfo=dt.timezone.utc).timestamp()
-    folder = Path(parent) / "20261021-090000Z_FLIGHT"
+    folder = Path(parent) / ("20261021-090000Z_FLIGHTIMU" if imu else "20261021-090000Z_FLIGHT")
     (folder / "camera").mkdir(parents=True, exist_ok=True)
     (folder / "raw").mkdir(exist_ok=True)
     v_own = 50.0
+    w_max = math.radians(6.0)
 
-    def nose(t: float) -> float:  # heading of the nose (true)
-        if t < 18:
-            return 0.0
-        if t < 23:
-            return 6.0 * (t - 18)
-        return 30.0
+    # turn-rate profile on a fine grid: ramp 18-20 s, hold to 24 s, ramp down to 26 s
+    step = 0.005
+    grid = np.arange(-2.0, duration_s + 3.0, step)
+    omega = np.interp(grid, [18, 20, 24, 26], [0, w_max, w_max, 0], left=0, right=0)
+    nose_rad = np.cumsum(omega) * step
+    nose_rad -= np.interp(0.0, grid, nose_rad)
+    trk_rad = nose_rad + math.radians(crab_deg)
+    north = np.cumsum(v_own * np.cos(trk_rad)) * step
+    east = np.cumsum(v_own * np.sin(trk_rad)) * step
+    north -= np.interp(0.0, grid, north)
+    east -= np.interp(0.0, grid, east)
 
-    def own(t: float) -> tuple[float, float, float]:
-        # integrate the path (fine steps) - the aircraft moves along its track = nose + crab
-        n = e = 0.0
-        steps = max(1, int(t * 10))
-        for k in range(steps):
-            tt = (k + 0.5) * t / steps
-            trk = math.radians(nose(tt) + crab_deg)
-            n += v_own * math.cos(trk) * t / steps
-            e += v_own * math.sin(trk) * t / steps
-        la, lo = offset_position(lat0, lon0, n, e)
+    def nose(t):
+        return math.degrees(float(np.interp(t, grid, nose_rad)))
+
+    def bank(t):
+        return math.degrees(math.atan(v_own * float(np.interp(t, grid, omega)) / G))
+
+    def att(t):
+        return rotation(nose(t), 0.0, bank(t))
+
+    def own(t):
+        la, lo = offset_position(lat0, lon0, float(np.interp(t, grid, north)),
+                                 float(np.interp(t, grid, east)))
         return la, lo, alt0
 
-    def target(t: float) -> tuple[float, float, float]:
-        # starts 5 km ahead of the start point, flies south at 45 m/s, 80 m higher
+    def target(t):
         la, lo = offset_position(lat0, lon0, 5000 - 45 * t, 150.0)
         return la, lo, alt0 + 80
 
     hfov = 50.0
-    horizon_cam = CameraModel(CameraConfig(width=width, height=height, hfov_deg=hfov, pitch_deg=0.0))
-    bg = _sky(width, height, int(horizon_cam.direction_to_pixel(0.0, 0.0)[1]), rng)
+    cam = CameraModel(CameraConfig(width=width, height=height, hfov_deg=hfov))
+    bg = _sky(width, height, int(cam.direction_to_pixel(0.0, 0.0)[1]), rng)
     writer, vpath = open_writer(folder / "camera" / "cam0_0000", "mjpg", fps, (width, height))
     stamps = ["segment,frame,t_wall,t_rel"]
     for i in range(int(duration_s * fps)):
         t = i / fps
         img = bg.copy()
-        la, lo, al = own(t)
-        az, el, dist = look_angles(la, lo, al, *target(t))
-        uv = horizon_cam.direction_to_pixel((az - nose(t) + 180) % 360 - 180, el)
+        d = np.array(enu(*own(t), *target(t)))
+        az, el = body_angles(att(t), d)
+        uv = cam.direction_to_pixel(az, el)
         if uv:
-            _draw_aircraft(img, uv[0], uv[1], max(1.5, 11.0 / dist * horizon_cam.f))
+            _draw_aircraft(img, uv[0], uv[1], max(1.5, 11.0 / float(np.linalg.norm(d)) * cam.f))
         img += rng.normal(0, 2.0, img.shape).astype(np.float32)
         writer.write(np.clip(img, 0, 255).astype(np.uint8))
         stamps.append(f"0,{i},{t0 + t:.4f},{t:.4f}")
@@ -379,6 +390,28 @@ def make_synthetic_flight_session(parent: str | Path, width: int = 1280, height:
     (folder / "raw" / "gps_nmea.txt").write_text("\n".join(raw_gps) + "\n", encoding="utf-8")
     (folder / "raw" / "adsb_sbs.txt").write_text("\n".join(raw_sbs) + "\n", encoding="utf-8")
     (folder / "traffic.jsonl").write_text("".join(r.to_json() + "\n" for r in reports), encoding="utf-8")
+
+    if imu:
+        parser = WitMotionParser()
+        rows = [ImuSample.CSV_HEADER]
+        bias = np.array([0.4, -0.3, 0.25])  # deg/s
+        chunk, ts_imu = b"", np.arange(-1.0, duration_s + 1.0, 0.01)
+        for k, t in enumerate(ts_imu):
+            R = att(t)
+            dR = (att(t + 0.002) - att(t - 0.002)) / 0.004
+            W = R.T @ dR
+            w_b = np.degrees([W[2, 1], W[0, 2], W[1, 0]]) + bias + rng.normal(0, 0.05, 3)
+            om = float(np.interp(t, grid, omega))
+            tr = float(np.interp(t, grid, trk_rad))
+            a_n = v_own * om * np.array([math.cos(tr), -math.sin(tr), 0.0])
+            f_b = R.T @ (a_n + np.array([0, 0, G])) / G + rng.normal(0, 0.003, 3)
+            chunk += encode_sample(ImuSample(t0 + t, *f_b, *w_b, 0.0, 0.0, 0.0))
+            if k % 10 == 9:  # USB serial delivers bursts
+                for smp in parser.feed(chunk, t0 + t + 0.004):
+                    rows.append(smp.to_csv())
+                chunk = b""
+        (folder / "imu.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
     meta = {"format": "ota-session/1", "software": "synthetic", "mode": "aircraft",
             "started_utc": dt.datetime.fromtimestamp(t0, tz=dt.timezone.utc).isoformat(),
             "station": {"name": "FLIGHT", "lat": lat0, "lon": lon0, "elev_m": 241.0},
@@ -388,6 +421,7 @@ def make_synthetic_flight_session(parent: str | Path, width: int = 1280, height:
                        "requested": {"fps": fps}, "heading_deg": 0.0, "pitch_deg": 0.0,
                        "roll_deg": 0.0, "hfov_deg": hfov, "segment_files": {"0": vpath.name},
                        "timestamps": "camera/cam0.timestamps.csv"},
-            "truth": {"crab_deg": crab_deg, "turn": "18-23 s at 6 deg/s"}}
+            "truth": {"crab_deg": crab_deg, "turn": "18-26 s, up to 6 deg/s, coordinated",
+                      "imu": imu}}
     (folder / "session.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return folder

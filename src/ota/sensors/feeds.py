@@ -40,7 +40,7 @@ class LineFeed:
 
     def __init__(self, name: str, address: str, on_line: Callable[[str, float], None],
                  login: str | None = None, keepalive: str | None = None,
-                 keepalive_s: float = 240.0, retry_s: float = 5.0):
+                 keepalive_s: float = 240.0, retry_s: float = 5.0, binary: bool = False):
         self.name = name
         self.address = address.strip()
         self.on_line = on_line
@@ -48,6 +48,8 @@ class LineFeed:
         self.keepalive = keepalive
         self.keepalive_s = keepalive_s
         self.retry_s = retry_s
+        # binary=True: on_line gets raw byte chunks (e.g. WitMotion IMU packets), not text lines
+        self.binary = binary
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._conn = None
@@ -101,6 +103,15 @@ class LineFeed:
         except Exception:  # a bad line must never kill the feed
             log.exception("%s: error handling line %r", self.name, line[:120])
 
+    def _emit_bytes(self, chunk: bytes) -> None:
+        now = time.time()
+        self.lines += 1
+        self.last_rx = now
+        try:
+            self.on_line(chunk, now)
+        except Exception:
+            log.exception("%s: error handling data", self.name)
+
     def _run_tcp(self) -> None:
         addr = self.address[4:] if self.address.lower().startswith("tcp:") else self.address
         host, _, port = addr.rpartition(":")
@@ -122,6 +133,9 @@ class LineFeed:
                     continue
                 if not chunk:
                     raise ConnectionError("connection closed by peer")
+                if self.binary:
+                    self._emit_bytes(chunk)
+                    continue
                 buf += chunk
                 *lines, buf = buf.split(b"\n")
                 for raw in lines:
@@ -137,6 +151,11 @@ class LineFeed:
             self._conn = s
             self.connected, self.error = True, ""
             while not self._stop.is_set():
+                if self.binary:
+                    chunk = s.read(max(1, s.in_waiting))
+                    if chunk:
+                        self._emit_bytes(chunk)
+                    continue
                 raw = s.readline()
                 if raw:
                     self._emit(raw)

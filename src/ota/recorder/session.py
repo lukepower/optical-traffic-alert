@@ -92,6 +92,8 @@ class SessionSettings:
     gps_enabled: bool = False          # own position (aircraft mode): USB GNSS receiver, NMEA
     gps_address: str = "COM5@9600"
     own_icao: str = ""                 # own transponder address (hex), excluded from traffic
+    imu_enabled: bool = False          # attitude sensor on the camera (WitMotion, USB serial)
+    imu_address: str = "COM6@115200"
     # misc
     qnh_hpa: float = 1013.25
     notes: str = ""
@@ -453,7 +455,38 @@ class TrafficLogger:
             self._jsonl, self._raw = None, {}
 
 
-def make_feeds(s: SessionSettings, logger: TrafficLogger) -> list[LineFeed]:
+class ImuLogger:
+    """Writes imu.csv (one row per sample) and keeps the latest sample for the GUI."""
+
+    def __init__(self, out_dir: Path | None):
+        from ..sensors.witmotion import ImuSample, WitMotionParser
+        self.parser = WitMotionParser()
+        self.latest: ImuSample | None = None
+        self.samples = 0
+        self.rate_hz = 0.0
+        self._n, self._t = 0, time.time()
+        self._f = None
+        if out_dir is not None:
+            self._f = open(out_dir / "imu.csv", "w", encoding="utf-8")
+            self._f.write(ImuSample.CSV_HEADER + "\n")
+
+    def feed(self, data: bytes, rx: float) -> None:
+        for smp in self.parser.feed(data, rx):
+            self.latest = smp
+            self.samples += 1
+            self._n += 1
+            if self._f:
+                self._f.write(smp.to_csv() + "\n")
+        if rx - self._t >= 2.0:
+            self.rate_hz, self._n, self._t = self._n / (rx - self._t), 0, rx
+
+    def close(self) -> None:
+        if self._f:
+            self._f.close()
+            self._f = None
+
+
+def make_feeds(s: SessionSettings, logger: TrafficLogger, imu: "ImuLogger | None" = None) -> list[LineFeed]:
     feeds: list[LineFeed] = []
     if s.adsb_enabled and s.adsb_address:
         sbs = SbsParser()
@@ -495,6 +528,8 @@ def make_feeds(s: SessionSettings, logger: TrafficLogger) -> list[LineFeed]:
                 if r.src == "own":
                     logger.report(r)
         feeds.append(LineFeed("GPS", s.gps_address, on_gps))
+    if imu is not None and s.imu_address:
+        feeds.append(LineFeed("IMU", s.imu_address, imu.feed, binary=True))
     return feeds
 
 
@@ -521,6 +556,7 @@ class SessionRecorder:
         from .smart import TriggerLog
         self.triggers = TriggerLog()
         self.traffic_hits: list[str] = []
+        self.imu: ImuLogger | None = None
         self._trig_stop = threading.Event()
         self._trig_thread: threading.Thread | None = None
 
@@ -550,7 +586,8 @@ class SessionRecorder:
                          self.camera.status.height, self.camera.status.format)
             self._start_dump1090()
             self.logger = TrafficLogger(self.dir)
-            self.feeds = [f.start() for f in make_feeds(s, self.logger)]
+            self.imu = ImuLogger(self.dir) if s.imu_enabled else None
+            self.feeds = [f.start() for f in make_feeds(s, self.logger, self.imu)]
             if self.camera and self.camera.smart:
                 self._trig_thread = threading.Thread(target=self._traffic_trigger_loop,
                                                      name="traffic-trigger", daemon=True)
@@ -572,6 +609,8 @@ class SessionRecorder:
             self.camera.stop()
         if self.logger:
             self.logger.close()
+        if self.imu:
+            self.imu.close()
         if self._dump1090 and self._dump1090.poll() is None:
             self._dump1090.terminate()
             try:
@@ -668,6 +707,7 @@ class SessionRecorder:
                 "ogn_local": s.ogn_local_address if s.ogn_local else None,
                 "flarm": s.flarm_address if s.flarm_enabled else None,
                 "gps": s.gps_address if s.gps_enabled else None,
+                "imu": s.imu_address if s.imu_enabled else None,
             },
             "stats": self.stats(),
         }
@@ -682,6 +722,8 @@ class SessionRecorder:
                            "kept_s": round(c.kept_s, 1), "discarded_s": round(c.discarded_s, 1),
                            "idle_frames": c.idle_frames}
             d["triggers"] = dict(self.triggers.counts)
+        if self.imu:
+            d["imu"] = {"samples": self.imu.samples, "bad_packets": self.imu.parser.bad}
         if self.logger:
             d["traffic"] = {"reports": dict(self.logger.table.counts),
                             "aircraft": len(self.logger.keys)}
