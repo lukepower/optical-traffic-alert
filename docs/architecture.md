@@ -207,9 +207,23 @@ FLARM (868 MHz) will feed the same `TrafficTarget` structure via a second SDR an
 
 ## Performance
 
-Measured in the cloud test environment (CPU, 1920×1080, without classifier): about 60 ms per frame
-(≈ 16 fps). A laptop with an 11th–13th gen Intel Core i5/i7 should be similar; 4K costs about four
-times as much. Knobs: `frame_stride`, smaller `kernel_px`, `pyramid_scales: [1.0]`, masks.
+`ota bench` measures the detector on a synthetic 4K frame. In the cloud test environment
+(2 vCPU) the default settings take about **115 ms per 4K frame (≈ 8.6 fps for one camera)**:
+
+| Variant | ms / 4K frame |
+|---|---|
+| default (ellipse kernel, pyramid, sky mask) | ~115 |
+| full resolution only | ~105 |
+| rect kernel | ~80 |
+| without sky mask | ~250 |
+
+Two optimisations made this possible: connected components are only labelled in the regions of a
+coarse grid that actually contain candidate pixels (a full-frame labelling at 4K costs ~15 ms per
+call), and the background-uniformity check is evaluated locally per candidate instead of with
+full-frame box filters. The rect kernel is faster still but produced a false warning near a cloud
+edge in the synthetic test, so ellipse stays the default.
+
+Knobs: `frame_stride`, `kernel_shape`, `pyramid_scales: [1.0]`, masks.
 
 ## Known limitations (phase 1)
 

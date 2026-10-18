@@ -12,7 +12,9 @@ Source strings (``CameraConfig.source``):
 
 from __future__ import annotations
 
+import logging
 import platform
+import threading
 import time
 from dataclasses import dataclass
 from typing import Iterator
@@ -21,6 +23,8 @@ import cv2
 import numpy as np
 
 from ..config import CameraConfig
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -87,22 +91,74 @@ class VideoFileSource(FrameSource):
         self.cap.release()
 
 
-class UsbCameraSource(FrameSource):
-    """Live camera through OpenCV (UVC webcams, e.g. the IMX678 USB module)."""
+def fourcc_str(value: float) -> str:
+    v = int(value)
+    return "".join(chr((v >> 8 * i) & 0xFF) for i in range(4)).strip("\x00")
 
-    def __init__(self, cam: CameraConfig, index: int):
+
+def open_usb_camera(index: int, width: int, height: int, fps: float, pixel_format: str = "YUY2",
+                    exposure: float | None = None, gain: float | None = None) -> cv2.VideoCapture:
+    """Open a UVC camera and request format, size and frame rate.
+
+    The camera may silently choose something else - always check the
+    returned capture's CAP_PROP_* values (``ota probe`` does that)."""
+    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+    cap = cv2.VideoCapture(index, backend)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open camera {index}")
+    if pixel_format:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*pixel_format[:4].ljust(4)))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, fps)
+    if exposure is not None:
+        # DirectShow: 0.25 = manual; V4L2: 1 = manual
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25 if platform.system() == "Windows" else 1)
+        cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+    if gain is not None:
+        cap.set(cv2.CAP_PROP_GAIN, gain)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
+class UsbCameraSource(FrameSource):
+    """Live UVC camera (e.g. Svpro IMX415 USB 3.0, IMX678 modules).
+
+    With ``latest_only=True`` a background thread keeps grabbing and the
+    pipeline always gets the newest frame. If processing is slower than the
+    camera, old frames are dropped instead of piling up - essential for a
+    warning system, where a 2-second-old frame is useless.
+    """
+
+    def __init__(self, cam: CameraConfig, index: int, latest_only: bool = True):
         super().__init__(cam)
-        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
-        self.cap = cv2.VideoCapture(index, backend)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Cannot open camera {index}")
-        # Many USB2 cameras only deliver high resolutions as MJPEG
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam.height)
-        self.cap.set(cv2.CAP_PROP_FPS, cam.fps)
+        self.cap = open_usb_camera(index, cam.width, cam.height, cam.fps, cam.pixel_format,
+                                   cam.exposure, cam.gain)
         self._w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.format = fourcc_str(self.cap.get(cv2.CAP_PROP_FOURCC))
+        self.latest_only = latest_only
+        self._lock = threading.Lock()
+        self._latest: tuple[float, np.ndarray] | None = None
+        self._stop = threading.Event()
+        self.dropped = 0
+        if (self._w, self._h) != (cam.width, cam.height):
+            log.warning("camera %s delivers %dx%d instead of %dx%d", cam.name, self._w, self._h,
+                        cam.width, cam.height)
+        if latest_only:
+            threading.Thread(target=self._grab, daemon=True).start()
+
+    def _grab(self) -> None:
+        t0 = time.monotonic()
+        while not self._stop.is_set():
+            ok, img = self.cap.read()
+            if not ok:
+                break
+            with self._lock:
+                if self._latest is not None:
+                    self.dropped += 1
+                self._latest = (time.monotonic() - t0, img)
+        self._stop.set()
 
     @property
     def size(self) -> tuple[int, int]:
@@ -112,13 +168,26 @@ class UsbCameraSource(FrameSource):
         i = 0
         t0 = time.monotonic()
         while True:
-            ok, img = self.cap.read()
-            if not ok:
-                break
-            yield Frame(self.cam.name, i, time.monotonic() - t0, img)
+            if self.latest_only:
+                item = None
+                while item is None:
+                    if self._stop.is_set() and self._latest is None:
+                        return
+                    with self._lock:
+                        item, self._latest = self._latest, None
+                    if item is None:
+                        time.sleep(0.002)
+                t, img = item
+            else:
+                ok, img = self.cap.read()
+                if not ok:
+                    return
+                t = time.monotonic() - t0
+            yield Frame(self.cam.name, i, t, img)
             i += 1
 
     def close(self) -> None:
+        self._stop.set()
         self.cap.release()
 
 

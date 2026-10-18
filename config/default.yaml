@@ -10,9 +10,13 @@ cameras:
     height: 2160
     fps: 30
     hfov_deg: 50
+    pixel_format: YUY2     # YUY2 (uncompressed, USB 3.0) | MJPG | "" (camera default)
+    exposure: null         # manual exposure in driver units (DirectShow: -10 ~ 1 ms); null = auto
+    gain: null
 
 detector:
   kernel_px: 15            # objects smaller than this are highlighted
+  kernel_shape: ellipse    # ellipse (default) | rect (~2x faster, more false detections near clouds)
   sigma_k: 6.0             # threshold = mean + k*std of the filter response ...
   min_contrast: 12         # ... but at least this (0..255)
   min_area_px: 2

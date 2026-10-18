@@ -48,6 +48,13 @@ class CameraConfig:
     pitch_deg: float = 0.0
     roll_deg: float = 0.0
     masks: list[MaskRect] = field(default_factory=list)
+    # USB cameras: requested pixel format. "YUY2" = uncompressed (best for tiny
+    # targets, needs USB 3.0 at 4K), "MJPG" = compressed, "" = camera default.
+    pixel_format: str = "YUY2"
+    # Manual exposure in the driver's units (DirectShow: log2 seconds, e.g.
+    # -10 ~ 1 ms; Linux V4L2: 100 us steps). None = leave auto exposure on.
+    exposure: float | None = None
+    gain: float | None = None
 
 
 @dataclass
@@ -55,6 +62,9 @@ class DetectorConfig:
     # Kernel size of the morphological filter. Objects smaller than this
     # (in pixels) are highlighted, larger structures (clouds, terrain) suppressed.
     kernel_px: int = 15
+    # "ellipse" (default) or "rect". rect is ~2x faster overall, but in tests it
+    # produced a false warning near a cloud edge - keep ellipse unless speed matters.
+    kernel_shape: str = "ellipse"
     # Threshold = mean + k * std of the filtered image, but at least min_contrast
     sigma_k: float = 6.0
     min_contrast: float = 12.0

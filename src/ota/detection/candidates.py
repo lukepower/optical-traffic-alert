@@ -53,7 +53,8 @@ class CandidateDetector:
         self.cfg = cfg
         self.cam = cam
         k = max(3, int(cfg.kernel_px) | 1)  # odd
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        shape = cv2.MORPH_ELLIPSE if cfg.kernel_shape == "ellipse" else cv2.MORPH_RECT
+        self.kernel = cv2.getStructuringElement(shape, (k, k))
         self._mask_cache: tuple[tuple[int, int], np.ndarray] | None = None
         self._sky: np.ndarray | None = None
 
@@ -146,29 +147,23 @@ class CandidateDetector:
             _, binary = cv2.threshold(resp, thr, 255, cv2.THRESH_BINARY)
             # join fragments of one object (fuselage / wings / tail)
             binary = cv2.dilate(binary, np.ones((3, 3), np.uint8))
-            n, _, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
-            if n <= 1:
-                continue
+            half = (3 * k) // 2
+            H, W = background.shape[:2]
 
-            bg_std = None
-            if cfg.max_background_std > 0:
-                win = 3 * k
-                bgf = background.astype(np.float32)
-                m = cv2.boxFilter(bgf, -1, (win, win))
-                m2 = cv2.boxFilter(bgf * bgf, -1, (win, win))
-                bg_std = np.sqrt(np.maximum(m2 - m * m, 0))
-
-            for i in range(1, n):
-                x, y, w, h, area = stats[i]
+            for x, y, w, h, area, cx, cy in _components(binary):
                 # dilation added a 1 px border; remove it again from the size
                 w, h = max(1, w - 2), max(1, h - 2)
                 area = max(1, area - 2 * (w + h))
                 area_full = area / (scale * scale)
                 if area_full < cfg.min_area_px or area_full > cfg.max_area_px:
                     continue
-                cx, cy = centroids[i]
-                if bg_std is not None and bg_std[int(cy), int(cx)] > cfg.max_background_std:
-                    continue
+                if cfg.max_background_std > 0:
+                    # local uniformity of the background around the candidate
+                    ix, iy = int(cx), int(cy)
+                    win = background[max(0, iy - half):min(H, iy + half + 1),
+                                     max(0, ix - half):min(W, ix + half + 1)]
+                    if float(win.std()) > cfg.max_background_std:
+                        continue
                 roi = resp[y:y + h + 2, x:x + w + 2]
                 contrast = float(roi.max())
                 # Integrated contrast ("mass") divided by the peak gives an
@@ -182,6 +177,42 @@ class CandidateDetector:
                     eff_area=eff_area,
                 ))
         return results
+
+
+def _components(binary: np.ndarray, cell: int = 64, max_points: int = 50000):
+    """Connected components of a sparse binary image.
+
+    A full-frame connectedComponentsWithStats on a 4K image costs ~15 ms even
+    when only a handful of pixels are set. Here the set pixels are first
+    located on a coarse grid; only the regions that contain something are
+    labelled. Yields (x, y, w, h, area, cx, cy) in image coordinates.
+    """
+    pts = cv2.findNonZero(binary)
+    if pts is None:
+        return
+    if len(pts) > max_points:  # dense image: plain full-frame labelling is fine
+        n, _, stats, cents = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        for i in range(1, n):
+            x, y, w, h, a = stats[i]
+            yield int(x), int(y), int(w), int(h), int(a), float(cents[i][0]), float(cents[i][1])
+        return
+    H, W = binary.shape
+    gh, gw = (H + cell - 1) // cell, (W + cell - 1) // cell
+    grid = np.zeros((gh, gw), np.uint8)
+    p = pts.reshape(-1, 2)
+    grid[p[:, 1] // cell, p[:, 0] // cell] = 255
+    grid = cv2.dilate(grid, np.ones((3, 3), np.uint8))  # objects across cell borders
+    n, _, gstats, _ = cv2.connectedComponentsWithStats(grid, connectivity=8)
+    for g in range(1, n):
+        gx, gy, gw_, gh_, _ = gstats[g]
+        x0, y0 = gx * cell, gy * cell
+        x1, y1 = min(W, (gx + gw_) * cell), min(H, (gy + gh_) * cell)
+        roi = binary[y0:y1, x0:x1]
+        m, _, stats, cents = cv2.connectedComponentsWithStats(roi, connectivity=8)
+        for i in range(1, m):
+            x, y, w, h, a = stats[i]
+            yield (int(x + x0), int(y + y0), int(w), int(h), int(a),
+                   float(cents[i][0] + x0), float(cents[i][1] + y0))
 
 
 def crop(image: np.ndarray, c: Candidate, size: int) -> np.ndarray:

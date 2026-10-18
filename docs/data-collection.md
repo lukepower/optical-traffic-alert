@@ -10,8 +10,11 @@ the aerodrome operator's permission. Arriving traffic is ideal test material: a 
 straight at the camera and growing – exactly the collision geometry.
 
 ```powershell
-ota record --camera usb:0 --width 3840 --height 2160 --fps 30 --out data\raw\lipb_2026-10-20_rwy19.mp4 --seconds 600
+ota record --camera usb:0 --width 3840 --height 2160 --fps 15 --out data\raw\lipb_2026-10-20_rwy19 --seconds 600
 ```
+
+`ota record` writes near-lossless MJPEG (`.avi`) plus a `.timestamps.csv` with the real frame
+times. 4K at 15 fps is roughly 1–2 GB per minute – use a fast SSD.
 
 For every recording note (e.g. in `data/raw/README.md`, not in the repository):
 
@@ -31,7 +34,7 @@ For every recording note (e.g. in `data/raw/README.md`, not in the repository):
 ## Evaluation
 
 ```powershell
-ota run --video data\raw\flight1.mp4 --hfov 50 --record out\flight1_overlay.mp4
+ota run --video data\raw\flight1.avi --hfov 50 --record out\flight1_overlay.mp4
 ```
 
 * Watch `out\flight1_overlay.mp4`: were the known aircraft found? When?

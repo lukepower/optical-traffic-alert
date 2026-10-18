@@ -89,7 +89,9 @@ Full setup including USB camera, RTL-SDR and intercom: [docs/setup-windows.md](d
 | `ota synth [file.mp4]` | create a synthetic test video + ground-truth JSON |
 | `ota run --video file.mp4 [--show] [--record out.mp4]` | run the pipeline on a video |
 | `ota run --aircraft v35a` | live, with the cameras from the aircraft profile |
-| `ota record --camera usb:0 --out data/raw/flight1.mp4` | record raw video (data collection) |
+| `ota record --camera usb:0 --out data/raw/flight1.avi` | record raw video, near-lossless (data collection) |
+| `ota probe --camera usb:0` | test which resolutions/formats/fps a camera really delivers |
+| `ota bench` | measure processing speed on this machine at 4K |
 | `ota cameras` | list connected USB cameras |
 
 Important options of `ota run`: `--audio print|pyttsx3|piper`, `--language en|de`,

@@ -54,27 +54,58 @@ python -c "import openvino as ov; print(ov.Core().available_devices)"
 
 Expected: `['CPU', 'GPU']`. Then set `classifier.device: GPU` or `AUTO` in `config/default.yaml`.
 
-## 3. USB camera
+## 3. First test with a new camera (checklist)
+
+1. **Plug into a USB 3 port** (blue, or marked SS). Check with `ota cameras` that it shows up.
+2. **What does it really deliver?**
+
+   ```powershell
+   ota probe --camera usb:0
+   ```
+
+   This tries 4K/1440p/1080p in YUY2 (uncompressed) and MJPG and prints the real resolution, format and
+   frame rate. Goal: **YUY2 3840×2160 with ≥ 10 fps**. A lossless 4K snapshot is written to
+   `data\raw\probe_4k.png` – zoom in on the sky and check that single pixels are sharp, not blocky.
+   If 4K only comes as MJPG, set `pixel_format: MJPG` in the camera config.
+3. **Focus and field of view:** point the camera at a distant object (> 500 m), set the zoom to roughly
+   50–60° horizontal, focus on infinity and lock the rings (tape). Measure the field of view as in
+   [calibration.md](calibration.md) and note `hfov_deg`.
+4. **Exposure:** against the bright sky, auto exposure often overexposes or pumps. Try manual values:
+
+   ```powershell
+   ota record --camera usb:0 --exposure -10 --seconds 10 --out data\raw\exp_test
+   ```
+
+   (DirectShow units: −10 ≈ 1 ms, −9 ≈ 2 ms, −11 ≈ 0.5 ms.) The sky should be bright but not white.
+5. **How fast is this machine?** `ota bench` measures the processing speed at 4K.
+6. **Live test:** `ota run --show` with the camera configured in `config/default.yaml`.
+
+## 4. USB camera notes
 
 Recommended for phase 1: Waveshare **IMX678 8MP USB Camera** (see the bill of materials). It is a UVC
 device and needs no driver on Windows.
 
 ```powershell
 ota cameras                          # finds usb:0, usb:1, ...
-ota record --camera usb:0 --width 3840 --height 2160 --out data\raw\test.mp4 --seconds 30
-ota run --video data\raw\test.mp4 --hfov 50 --show
+ota record --camera usb:0 --width 3840 --height 2160 --out data\raw\test.avi --seconds 30
+ota run --video data\raw\test.avi --hfov 50 --show
 ```
 
 Notes:
 
-* Over USB 2.0 high resolutions only come as **MJPEG** – this is configured. Compression costs some
-  contrast on very small targets; fine for first tests.
+* The camera config requests **YUY2** (uncompressed) by default. Over USB 2.0, 4K usually only comes
+  as **MJPEG** – then set `pixel_format: MJPG`. Compression costs some contrast on very small targets.
+* `ota record` stores near-lossless MJPEG (`--codec mjpg`, default) or lossless FFV1 (`--codec ffv1`).
+  Avoid `mp4v` for training data – it blurs targets of a few pixels. A `.timestamps.csv` next to the
+  video holds the real frame times.
+* Live, the pipeline always processes the **newest** frame and drops older ones if it is slower than
+  the camera, so warnings never lag behind.
 * `--hfov` must match the lens, otherwise clock positions and bearing rates are wrong
   (see [calibration.md](calibration.md)).
 * Exposure: as short and as fixed as possible (no auto-exposure pumping). Set it in the Windows camera
   dialog or the driver settings.
 
-## 4. Speech output into the intercom
+## 5. Speech output into the intercom
 
 **Quick:** `--audio pyttsx3` uses the built-in Windows voices. Install an English voice under
 *Settings → Time & language → Language* (for `en`).
@@ -97,7 +128,7 @@ audio:
 (music in). If there is hum, add a ground-loop isolator. Set the volume so callouts are clearly above
 engine noise but below radio traffic.
 
-## 5. ADS-B with an RTL-SDR (optional)
+## 6. ADS-B with an RTL-SDR (optional)
 
 1. Plug in the RTL-SDR Blog V4.
 2. With [Zadig](https://zadig.akeo.ie/) install the WinUSB driver for "Bulk-In, Interface (Interface 0)".
@@ -112,7 +143,7 @@ Alternatively readsb in WSL2 (USB pass-through with `usbipd-win`).
 4. Set `adsb.enabled: true` in `config/default.yaml`. (Fusion in the pipeline follows in a later
    version; the parser is done and tested.)
 
-## 6. IMU (optional, for flight tests)
+## 7. IMU (optional, for flight tests)
 
 BNO085 on a small USB microcontroller (RP2040 or ESP32) that prints lines in the format
 
