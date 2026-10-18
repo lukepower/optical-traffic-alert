@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-train/
+
+# Ultralytics downloads and training outputs
+*.pt
+weights/
 venv/
 .pytest_cache/
 build/
