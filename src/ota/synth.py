@@ -269,3 +269,125 @@ def make_synthetic_session(parent: str | Path, width: int = 1280, height: int = 
     }
     (folder / "session.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return folder
+
+
+def make_synthetic_flight_session(parent: str | Path, width: int = 1280, height: int = 720,
+                                  fps: float = 8.0, duration_s: float = 30.0, crab_deg: float = 3.0,
+                                  seed: int = 5) -> Path:
+    """In-flight session: own aircraft flies north at 50 m/s, camera looks along the nose.
+
+    * own position comes as GPS NMEA ($GPRMC/$GPGGA) through the real parser;
+      the GPS track differs from the nose heading by ``crab_deg`` (wind)
+    * ``4CA2D6`` (ADS-B) approaches head-on, slightly higher -> drawn
+    * from 18 s to 23 s the own aircraft turns at 6 deg/s -> those frames must be excluded
+    """
+    import datetime as dt
+
+    from .config import CameraConfig
+    from .geometry import CameraModel
+    from .recorder.video import open_writer
+    from .sensors.adsb import SbsParser, sbs_report
+    from .sensors.flarm import FlarmNmeaParser
+    from .sensors.traffic import look_angles, offset_position
+
+    rng = np.random.default_rng(seed)
+    lat0, lon0, alt0 = 46.30, 11.30, 1500.0
+    t0 = dt.datetime(2026, 10, 21, 9, 0, 0, tzinfo=dt.timezone.utc).timestamp()
+    folder = Path(parent) / "20261021-090000Z_FLIGHT"
+    (folder / "camera").mkdir(parents=True, exist_ok=True)
+    (folder / "raw").mkdir(exist_ok=True)
+    v_own = 50.0
+
+    def nose(t: float) -> float:  # heading of the nose (true)
+        if t < 18:
+            return 0.0
+        if t < 23:
+            return 6.0 * (t - 18)
+        return 30.0
+
+    def own(t: float) -> tuple[float, float, float]:
+        # integrate the path (fine steps) - the aircraft moves along its track = nose + crab
+        n = e = 0.0
+        steps = max(1, int(t * 10))
+        for k in range(steps):
+            tt = (k + 0.5) * t / steps
+            trk = math.radians(nose(tt) + crab_deg)
+            n += v_own * math.cos(trk) * t / steps
+            e += v_own * math.sin(trk) * t / steps
+        la, lo = offset_position(lat0, lon0, n, e)
+        return la, lo, alt0
+
+    def target(t: float) -> tuple[float, float, float]:
+        # starts 5 km ahead of the start point, flies south at 45 m/s, 80 m higher
+        la, lo = offset_position(lat0, lon0, 5000 - 45 * t, 150.0)
+        return la, lo, alt0 + 80
+
+    hfov = 50.0
+    horizon_cam = CameraModel(CameraConfig(width=width, height=height, hfov_deg=hfov, pitch_deg=0.0))
+    bg = _sky(width, height, int(horizon_cam.direction_to_pixel(0.0, 0.0)[1]), rng)
+    writer, vpath = open_writer(folder / "camera" / "cam0_0000", "mjpg", fps, (width, height))
+    stamps = ["segment,frame,t_wall,t_rel"]
+    for i in range(int(duration_s * fps)):
+        t = i / fps
+        img = bg.copy()
+        la, lo, al = own(t)
+        az, el, dist = look_angles(la, lo, al, *target(t))
+        uv = horizon_cam.direction_to_pixel((az - nose(t) + 180) % 360 - 180, el)
+        if uv:
+            _draw_aircraft(img, uv[0], uv[1], max(1.5, 11.0 / dist * horizon_cam.f))
+        img += rng.normal(0, 2.0, img.shape).astype(np.float32)
+        writer.write(np.clip(img, 0, 255).astype(np.uint8))
+        stamps.append(f"0,{i},{t0 + t:.4f},{t:.4f}")
+    writer.release()
+    (folder / "camera" / "cam0.timestamps.csv").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+
+    def nmea(body: str) -> str:
+        cs = 0
+        for ch in body:
+            cs ^= ord(ch)
+        return f"${body}*{cs:02X}"
+
+    def dm(v: float, deg_digits: int) -> str:
+        d = int(v)
+        return f"{d:0{deg_digits}d}{(v - d) * 60:07.4f}"
+
+    reports, raw_gps, raw_sbs = [], [], []
+    gps = FlarmNmeaParser()
+    sbs = SbsParser()
+    for k in range(int(duration_s) + 2):
+        t = k - 0.5
+        la, lo, al = own(t)
+        utc = dt.datetime.fromtimestamp(t0 + t, tz=dt.timezone.utc)
+        hms = utc.strftime("%H%M%S") + f".{int(utc.microsecond / 1e4):02d}"
+        trk = (nose(t) + crab_deg) % 360
+        for body in (f"GPGGA,{hms},{dm(la, 2)},N,{dm(lo, 3)},E,1,9,0.9,{al:.1f},M,47.0,M,,",
+                     f"GPRMC,{hms},A,{dm(la, 2)},N,{dm(lo, 3)},E,{v_own / 0.514444:.1f},{trk:.1f},"
+                     f"{utc.strftime('%d%m%y')},,,A"):
+            line = nmea(body)
+            rx = t0 + t + 0.1
+            raw_gps.append(f"{rx:.3f}\t{line}")
+            reports += gps.feed(line, rx)
+    for k in range(int(duration_s * 2) + 2):
+        t = -0.5 + k * 0.5
+        la, lo, al = target(t)
+        line = f"MSG,3,1,1,4CA2D6,1,,,,,,{int(round(al / 0.3048 / 25) * 25)},,,{la:.5f},{lo:.5f},,,0,0,0,0"
+        raw_sbs.append(f"{t0 + t:.3f}\t{line}")
+        r = sbs_report(sbs, line, t0 + t)
+        if r:
+            reports.append(r)
+    reports.sort(key=lambda r: r.rx)
+    (folder / "raw" / "gps_nmea.txt").write_text("\n".join(raw_gps) + "\n", encoding="utf-8")
+    (folder / "raw" / "adsb_sbs.txt").write_text("\n".join(raw_sbs) + "\n", encoding="utf-8")
+    (folder / "traffic.jsonl").write_text("".join(r.to_json() + "\n" for r in reports), encoding="utf-8")
+    meta = {"format": "ota-session/1", "software": "synthetic", "mode": "aircraft",
+            "started_utc": dt.datetime.fromtimestamp(t0, tz=dt.timezone.utc).isoformat(),
+            "station": {"name": "FLIGHT", "lat": lat0, "lon": lon0, "elev_m": 241.0},
+            "qnh_hpa": 1013.25, "own_icao": "",
+            "camera": {"source": "synthetic", "name": "cam0",
+                       "actual": {"width": width, "height": height, "format": "synthetic"},
+                       "requested": {"fps": fps}, "heading_deg": 0.0, "pitch_deg": 0.0,
+                       "roll_deg": 0.0, "hfov_deg": hfov, "segment_files": {"0": vpath.name},
+                       "timestamps": "camera/cam0.timestamps.csv"},
+            "truth": {"crab_deg": crab_deg, "turn": "18-23 s at 6 deg/s"}}
+    (folder / "session.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return folder

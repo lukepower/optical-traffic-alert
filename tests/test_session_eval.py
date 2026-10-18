@@ -156,3 +156,38 @@ def test_motion_trigger_ignores_static_specks():
     assert trig.counts.get("motion", 0) >= 1
     assert trig.any_between(t0 + 10, t0 + 14)
     assert not trig.any_between(t0, t0 + 4)
+
+
+def test_in_flight_evaluation_uses_gps_and_excludes_turns(tmp_path):
+    from ota.synth import make_synthetic_flight_session
+    folder = make_synthetic_flight_session(tmp_path, duration_s=26.0, crab_deg=3.0)
+    ev = SessionEvaluator(folder, save_crops=False)
+    s = ev.run()
+    assert s["mode"] == "aircraft"
+    # the GPS track is 3 deg off the nose: found as heading correction
+    assert s["camera_correction"]["applied"]
+    assert s["camera_corrected"]["heading_deg"] == pytest.approx(-3.0, abs=0.4)
+    assert s["frames_excluded"]["turning"] >= 20
+    t = {x["key"]: x for x in s["targets"]}
+    assert t["icao:4CA2D6"]["tracked_pct"] > 70
+    assert t["icao:4CA2D6"]["median_error_deg"] < 0.3
+
+
+def test_traffic_trigger_ignores_own_aircraft_and_far_targets():
+    from ota.recorder.smart import traffic_in_view
+    from ota.sensors.traffic import TrafficReport, TrafficTable, offset_position
+
+    tab = TrafficTable()
+    now = 1000.0
+    own = (46.0, 11.0, 1000.0)
+    for addr, (n, e), alt in (("OWN111", (50, 0), 1000), ("NEAR22", (4000, 200), 1100),
+                              ("BEHIND", (-4000, 0), 1000), ("FAR333", (40000, 0), 1000)):
+        la, lo = offset_position(own[0], own[1], n, e)
+        tab.add(TrafficReport(src="adsb", addr=addr, lat=la, lon=lo, alt_m=alt, rx=now))
+    hits = traffic_in_view(tab, own, 0.0, 0.0, 50.0, 16 / 9, 15.0, now=now)
+    assert hits == ["icao:NEAR22"]
+    # heading unknown: radius only (still not the own aircraft, not the far one)
+    hits = traffic_in_view(tab, own, None, 0.0, 50.0, 16 / 9, 15.0, now=now)
+    assert sorted(hits) == ["icao:BEHIND", "icao:NEAR22"]
+    assert traffic_in_view(tab, own, 0.0, 0.0, 50.0, 16 / 9, 15.0, now=now,
+                           exclude={"NEAR22"}) == []

@@ -17,6 +17,11 @@
 - [x] FLARM/OGN reception: OGN APRS (online and local receiver), FLARM NMEA data port
 - [x] Evaluation tool `ota evaluate`: expected image positions from ADS-B/FLARM, detection range,
       automatic heading/pitch correction, auto-labelled crops, overlay video
+- [x] Smart recording (traffic/motion triggers), hand-in by resumable upload (B2/R2/S3) or copy
+- [x] In-flight recording: GPS/FLARM own position, own-transponder exclusion, evaluation relative
+      to the GPS track with turn exclusion
+- [x] Data pipeline: `ota ingest` (folders/S3, catalogue, automatic evaluation), `ota review`
+      (sort crops by key press), `ota dataset` (train/val split by session)
 - [ ] Collect own ground recordings at an airfield (club members with OTA Recorder)
 - [ ] ADS-B cross-check in the live pipeline (cooperative / non-cooperative)
 
@@ -45,3 +50,7 @@
       Evaluate building on Stratux instead of a separate GDL 90 server.
 - [ ] Range estimate from aircraft type / wingspan
 - [ ] Lens distortion, sun/glare detection
+- [ ] Headless recorder box (Raspberry Pi 5 + camera + GPS + SDR) that starts with power and uploads
+      at home over Wi-Fi - for school/club aircraft without a laptop
+- [ ] **FPGA** stage 1 (e.g. AMD Kria): morphological filter on the pixel stream, DPU for the
+      classifier - once the algorithms are stable (see [hardware.md](hardware.md#fpga-as-an-alternative))

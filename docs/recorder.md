@@ -189,6 +189,40 @@ receivers have started to decode it. If those beacons appear in the OGN APRS fee
 parser should pick them up like any other aircraft. This has to be verified with real data
 ([roadmap](roadmap.md)).
 
+## In the aircraft (e.g. club or school aircraft)
+
+Recording in flight works the same way, with three differences:
+
+1. **Mode** *In the aircraft*. **Looking towards** is then the direction **relative to the nose**
+   (0 = straight ahead, −55 = left window …).
+2. **Own position** is required: a USB GPS receiver (any u-blox "GPS mouse", ~€20) under
+   *GPS receiver*, or the aircraft's FLARM data port under *FLARM device*. The status shows the
+   own position. Without it there is no evaluation.
+3. Enter the **own transponder address** (ICAO hex, e.g. from the registration certificate or
+   any ADS-B app). Otherwise the own ADS-B/FLARM signal shows up as traffic at 0 km. The recorder
+   also ignores anything closer than 300 m.
+
+In the aircraft the motion trigger is switched off automatically, because clouds and terrain
+move through the image all the time. Full frame rate is kept when cooperative traffic is within
+15 km and near the field of view.
+
+Practical rules:
+
+* Only with the consent of the flight school / aircraft owner. Tell instructors and students. The
+  camera looks outside, no audio is recorded.
+* Mount the camera firmly (suction mount on the windscreen, lens close to the glass, black hood
+  against reflections). It must not block the view or any control. Stow the laptop so that it
+  cannot come loose.
+* Power from the laptop battery or a power bank, **not from the aircraft**. Before the first
+  flight, check on the ground with the engine running that COM and GPS are not disturbed.
+* Start the recording before engine start and stop it after shutdown. Nothing has to be operated
+  in flight.
+
+Evaluation: the camera direction is taken relative to the GPS track. A constant wind correction
+angle is absorbed by the automatic heading correction. The aircraft's attitude is not known yet,
+so frames while turning (more than 3°/s) are left out. An attitude sensor (IMU) is on the
+roadmap.
+
 ## Privacy and rules
 
 * Recordings may show people, registrations and private property. Do not publish raw videos.
@@ -197,7 +231,12 @@ parser should pick them up like any other aircraft. This has to be verified with
   Aircraft that set the *no-tracking* flag are dropped by the recorder.
 * Not for use as a collision-avoidance system. This tool only records.
 
-## Evaluation (for developers)
+## Evaluation and sorting (project lead)
+
+Incoming sessions are imported, evaluated and turned into training data with `ota ingest`,
+`ota review` and `ota dataset`. See [data-pipeline.md](data-pipeline.md).
+
+## Evaluation of a single session
 
 ```powershell
 ota evaluate D:\OTA-Sessions\20261020-074512Z_LIPB --overlay

@@ -59,9 +59,15 @@ TEXT = {
     "exposure": ("Belichtung (leer = auto)", "Esposizione (vuoto = auto)", "Exposure (empty = auto)"),
     "gain": ("Verstärkung (leer = auto)", "Guadagno (vuoto = auto)", "Gain (empty = auto)"),
     "heading": ("Blickrichtung (° rechtweisend)", "Direzione (° vera)", "Looking towards (° true)"),
-    "heading_hint": ("ungefähr genügt – wird bei der Auswertung korrigiert",
-                     "basta circa – viene corretta nell'analisi",
-                     "approximate is fine – corrected during evaluation"),
+    "heading_hint": ("ungefähr genügt, wird korrigiert. Im Flugzeug: relativ zur Nase, 0 = geradeaus",
+                     "basta circa, viene corretta. In volo: rispetto al muso, 0 = avanti",
+                     "approximate is fine, corrected later. In the aircraft: relative to the nose, 0 = ahead"),
+    "gps": ("GPS-Empfänger (eigene Position)", "Ricevitore GPS (posizione propria)",
+            "GPS receiver (own position)"),
+    "own_icao": ("Eigener Transponder (ICAO hex)", "Proprio transponder (ICAO hex)",
+                 "Own transponder (ICAO hex)"),
+    "own_pos": ("Eigene Position", "Posizione propria", "Own position"),
+    "no_fix": ("keine – GPS/FLARM prüfen", "nessuna – controllare GPS/FLARM", "none – check GPS/FLARM"),
     "pitch": ("Neigung nach oben (°)", "Inclinazione verso l'alto (°)", "Tilt up (°)"),
     "hfov": ("Bildwinkel horizontal (°)", "Angolo orizzontale (°)", "Horizontal field of view (°)"),
     "rec_mode": ("Aufnahme", "Registrazione", "Recording"),
@@ -369,9 +375,20 @@ class RecorderApp:
         ttk.Checkbutton(f, text=self.t("flarm"),
                         variable=self.var("flarm_enabled", s.flarm_enabled, tk.BooleanVar)).grid(
             row=r, column=0, sticky="w", padx=6)
-        ports = [f"{p}@19200" for p in list_serial_ports()] or ["COM4@19200"]
+        serial_ports = list_serial_ports()
+        ports = [f"{p}@19200" for p in serial_ports] or ["COM4@19200"]
         ttk.Combobox(f, values=ports, textvariable=self.var("flarm_address", s.flarm_address),
                      width=16).grid(row=r, column=1, sticky="ew", padx=(0, 6))
+        r += 1
+        ttk.Checkbutton(f, text=self.t("gps"),
+                        variable=self.var("gps_enabled", s.gps_enabled, tk.BooleanVar)).grid(
+            row=r, column=0, sticky="w", padx=6)
+        ttk.Combobox(f, values=[f"{p}@9600" for p in serial_ports] or ["COM5@9600"],
+                     textvariable=self.var("gps_address", s.gps_address), width=16).grid(
+            row=r, column=1, sticky="ew", padx=(0, 6))
+        r += 1
+        ttk.Label(f, text=self.t("own_icao")).grid(row=r, column=0, sticky="w", padx=6)
+        self.entry(f, "own_icao", s.own_icao, 10).grid(row=r, column=1, sticky="w", padx=(0, 6))
 
         # -- hand in: upload / copy --
         f = ttk.Frame(left, padding=4)
@@ -459,11 +476,11 @@ class RecorderApp:
             s.upload_code = "".join(str(v["upload_code"]).split())
             for name in ("operator", "station_name", "notes", "output_dir", "camera_source",
                          "pixel_format", "adsb_address", "dump1090_path", "ogn_local_address",
-                         "flarm_address"):
+                         "flarm_address", "gps_address", "own_icao"):
                 setattr(s, name, str(v[name]).strip())
             s.record_mode = self._recmodes.get(v["record_mode"], "smart")
             for name in ("camera_enabled", "adsb_enabled", "ogn_online", "ogn_local", "flarm_enabled",
-                         "motion_trigger"):
+                         "motion_trigger", "gps_enabled"):
                 setattr(s, name, bool(v[name]))
             s.mode = self._modes.get(v["mode"], "ground")
             fields = {"lat": "lat", "lon": "lon", "elev_m": "elev", "qnh_hpa": "qnh", "fps": "fps",
@@ -823,6 +840,14 @@ class RecorderApp:
                 dot = "●" if ok else "○"
                 lines.append(f"{dot} {f.name:<13} {state:<16} {f.lines:7d} {self.t('lines')}"
                              + (f"  ({f.error})" if f.error and not f.connected else ""))
+            if rec.s.mode == "aircraft" and rec.logger:
+                own = rec.logger.table.ownship()
+                if own and own.lat is not None and now - own.rx < 10:
+                    lines.append(f"{self.t('own_pos')}: {own.lat:.4f} {own.lon:.4f}  "
+                                 f"{(own.alt_m or 0):.0f} m  {(own.gs_kt or 0):.0f} kt  "
+                                 f"{(own.track_deg or 0):.0f}°")
+                else:
+                    lines.append(f"{self.t('own_pos')}: {self.t('no_fix')}")
             self.feed_var.set("\n".join(lines))
             if rec.error:
                 warn.append(rec.error)
@@ -848,8 +873,10 @@ class RecorderApp:
             alt = r.alt_m if r.alt_m is not None else obs[2]
             az, el, rng = look_angles(*obs, r.lat, r.lon, alt)
             in_view = False
-            if s.camera_enabled and s.mode == "ground":
-                d = (az - s.cam_heading_deg + 180) % 360 - 180
+            ref = s.cam_heading_deg if s.mode == "ground" else (
+                own.track_deg + s.cam_heading_deg if own and own.track_deg is not None else None)
+            if s.camera_enabled and ref is not None and rng >= 300:
+                d = (az - ref + 180) % 360 - 180
                 in_view = abs(d) <= s.hfov_deg / 2
             rows.append((rng, r, az, in_view))
         rows.sort(key=lambda x: x[0])

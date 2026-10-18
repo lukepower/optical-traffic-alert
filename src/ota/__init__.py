@@ -11,4 +11,4 @@ This is NOT a certified device. It is an experimental aid and never a
 replacement for see-and-avoid.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

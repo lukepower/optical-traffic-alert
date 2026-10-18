@@ -107,6 +107,10 @@ no Python is needed. Guide: [docs/recorder.md](docs/recorder.md) (German:
 | `ota evaluate <session> [--overlay]` | compare a session's detections with ADS-B/FLARM positions: range, accuracy, heading correction |
 | `ota synth-session` | create a synthetic session to try `ota evaluate` |
 | `ota-recorder` | the recorder window (same as `OTA-Recorder.exe`) |
+| `ota upload-code` / `ota upload` | create an upload code for members / upload sessions from the command line |
+| `ota ingest <folder> [--s3 ota1:…]` | import incoming sessions, evaluate them, update the catalogue |
+| `ota review` | sort crops without cooperative traffic by key press |
+| `ota dataset --out data/crops_own` | export labelled crops as train/val (split by session) |
 | `ota probe --camera usb:0` | test which resolutions/formats/fps a camera really delivers |
 | `ota bench` | measure processing speed on this machine at 4K |
 | `ota cameras` | list connected USB cameras |
@@ -135,6 +139,7 @@ src/ota/
   sensors/traffic.py        common traffic record, geodesy (look angles)
   recorder/                 session recorder + Windows GUI (OTA Recorder)
   evaluate.py               session evaluation against ADS-B/FLARM ground truth
+  ingest.py, review.py      archive, catalogue, labelling, training-set export
   sensors/imu.py            IMU (BNO085 via USB microcontroller)
   geometry.py               pixel → azimuth/elevation → clock position, high/low
   pipeline.py               wiring, overlay, event log
@@ -161,6 +166,7 @@ docs/                       documentation (see below)
 | [docs/hardware.md](docs/hardware.md) | hardware, power supply, EMC, bill of materials |
 | [docs/data-collection.md](docs/data-collection.md) | own recordings on the ground and in flight |
 | [docs/recorder.md](docs/recorder.md) | OTA Recorder guide for club members, session format, evaluation |
+| [docs/data-pipeline.md](docs/data-pipeline.md) | importing, sorting and turning recordings into training data |
 | [docs/roadmap.md](docs/roadmap.md) | phases and next steps |
 | [docs/safety-and-legal.md](docs/safety-and-legal.md) | limits, liability, EASA considerations |
 

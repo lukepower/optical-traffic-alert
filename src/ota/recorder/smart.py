@@ -61,24 +61,29 @@ class TriggerLog:
             return sorted(r for r, t in self.last.items() if now - t <= within_s)
 
 
-def traffic_in_view(table: TrafficTable, observer: tuple[float, float, float] | None,
-                    heading_deg: float, pitch_deg: float, hfov_deg: float, aspect: float,
+def traffic_in_view(table: TrafficTable, observer: tuple[float, float, float],
+                    heading_deg: float | None, pitch_deg: float, hfov_deg: float, aspect: float,
                     radius_km: float, margin_deg: float = 10.0, max_age_s: float = 8.0,
-                    now: float | None = None) -> list[str]:
+                    now: float | None = None, exclude: set[str] | None = None,
+                    min_range_m: float = 300.0) -> list[str]:
     """Keys of cooperative aircraft near the camera's field of view.
 
-    ``observer`` None (own position unknown in the aircraft) -> nothing can be
-    excluded, so every aircraft within the table counts."""
+    ``heading_deg`` None (own heading unknown in the aircraft): only the radius
+    counts. Targets closer than ``min_range_m`` are the own aircraft's own
+    transponder/FLARM and are ignored, as are addresses in ``exclude``."""
     now = time.time() if now is None else now
     vfov = math.degrees(2 * math.atan(math.tan(math.radians(hfov_deg) / 2) / aspect))
     hits = []
+    exclude = exclude or set()
     for r in table.active(max_age_s, now):
-        if observer is None:
-            hits.append(r.key)
+        if r.addr in exclude:
             continue
         alt = r.alt_m if r.alt_m is not None else observer[2]
         az, el, rng = look_angles(*observer, r.lat, r.lon, alt)
-        if rng > radius_km * 1000:
+        if rng > radius_km * 1000 or rng < min_range_m:
+            continue
+        if heading_deg is None:
+            hits.append(r.key)
             continue
         if abs((az - heading_deg + 180) % 360 - 180) > hfov_deg / 2 + margin_deg:
             continue

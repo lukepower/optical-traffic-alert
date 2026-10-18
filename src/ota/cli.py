@@ -6,6 +6,9 @@
     ota record --camera usb:0 --out data/raw/flight1.avi      # record raw footage
     ota session --heading 190 --hfov 50                       # camera + ADS-B + FLARM/OGN session
     ota evaluate <session folder>          # compare detections with ADS-B/FLARM positions
+    ota ingest E:\\ --s3 ota1:...          # import + evaluate incoming sessions
+    ota review                             # sort unclear crops by key press
+    ota dataset --out data/crops_own       # labelled crops -> train/val
     ota probe  --camera usb:0               # what does the camera really deliver?
     ota bench                               # how fast is this machine?
     ota cameras                             # list USB cameras that OpenCV can open
@@ -146,6 +149,14 @@ def _cmd_session(args) -> int:
         st.ogn_local, st.ogn_local_address = True, args.ogn_local
     if args.flarm:
         st.flarm_enabled, st.flarm_address = True, args.flarm
+    if args.gps:
+        st.gps_enabled, st.gps_address = True, args.gps
+    if args.mode:
+        st.mode = args.mode
+    if args.own_icao:
+        st.own_icao = args.own_icao
+    if args.record_mode:
+        st.record_mode = args.record_mode
 
     rec = SessionRecorder(st)
     folder = rec.start()
@@ -220,6 +231,44 @@ def _cmd_upload(args) -> int:
         print(f"\n{folder}: {'complete' if ok else 'INCOMPLETE - ' + up.progress.error}")
         if not ok:
             return 1
+    return 0
+
+
+def _cmd_ingest(args) -> int:
+    from .ingest import Archive
+    ar = Archive(args.archive)
+    new = []
+    for src in args.sources or []:
+        new += ar.ingest_folder(src, club=args.club, evaluate=not args.no_evaluate,
+                                stride=args.stride, move=args.move)
+    if args.s3:
+        from .recorder.upload import UploadConfig
+        new += ar.ingest_s3(UploadConfig.from_code(args.s3), evaluate=not args.no_evaluate,
+                            stride=args.stride)
+    if args.reevaluate:
+        for row in ar.db.execute("SELECT name FROM sessions WHERE evaluated_utc IS NULL").fetchall():
+            ar.evaluate(row["name"], stride=args.stride)
+    csv_path = ar.export_csv()
+    n_review = len(ar.review_items())
+    print(f"New sessions: {len(new)}" + (" - " + ", ".join(new) if new else ""))
+    print(f"Catalogue: {csv_path}")
+    print(f"Crops waiting for review: {n_review}  (ota review --archive {args.archive})")
+    ar.close()
+    return 0
+
+
+def _cmd_review(args) -> int:
+    from .review import main as review_main
+    return review_main(args.archive)
+
+
+def _cmd_dataset(args) -> int:
+    from .ingest import Archive
+    ar = Archive(args.archive)
+    counts = ar.export_dataset(args.out, val_fraction=args.val)
+    ar.close()
+    print(json.dumps(counts, indent=2))
+    print(f"Train with: python tools/train_classifier.py --data {args.out}")
     return 0
 
 
@@ -405,6 +454,10 @@ def build_parser() -> argparse.ArgumentParser:
     se.add_argument("--ogn-radius", type=float)
     se.add_argument("--ogn-local", help="local OGN receiver host:port (ogn-decode, port 50001)")
     se.add_argument("--flarm", help="FLARM NMEA port, e.g. COM4@19200 or host:2000")
+    se.add_argument("--gps", help="GPS receiver NMEA port for the own position, e.g. COM5@9600")
+    se.add_argument("--mode", choices=["ground", "aircraft"])
+    se.add_argument("--own-icao", help="own transponder address (hex), excluded from traffic")
+    se.add_argument("--record-mode", choices=["smart", "all"])
     se.add_argument("--qnh", type=float)
     se.add_argument("--operator")
     se.add_argument("--notes")
@@ -441,6 +494,27 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("sessions", nargs="+")
     up.add_argument("--code", help="upload code (or environment variable OTA_UPLOAD_CODE)")
     up.set_defaults(func=_cmd_upload)
+
+    ig = sub.add_parser("ingest", help="import sessions (folders or S3), evaluate, catalogue")
+    ig.add_argument("sources", nargs="*", help="folders to scan for sessions (USB stick, cloud folder)")
+    ig.add_argument("--s3", help="ota1: code of a key that may READ the bucket")
+    ig.add_argument("--archive", default="data/archive")
+    ig.add_argument("--club", default="local", help="club/source name for folder imports")
+    ig.add_argument("--move", action="store_true", help="move instead of copy (folder imports)")
+    ig.add_argument("--no-evaluate", action="store_true")
+    ig.add_argument("--reevaluate", action="store_true", help="also evaluate older, unevaluated sessions")
+    ig.add_argument("--stride", type=int, default=1, help="evaluate every n-th frame (faster)")
+    ig.set_defaults(func=_cmd_ingest)
+
+    rv = sub.add_parser("review", help="sort crops without cooperative traffic by key press")
+    rv.add_argument("--archive", default="data/archive")
+    rv.set_defaults(func=_cmd_review)
+
+    ds = sub.add_parser("dataset", help="export the labelled crops as train/val (split by session)")
+    ds.add_argument("--archive", default="data/archive")
+    ds.add_argument("--out", default="data/crops_own")
+    ds.add_argument("--val", type=float, default=0.2)
+    ds.set_defaults(func=_cmd_dataset)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")

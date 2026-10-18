@@ -59,6 +59,49 @@ effective resolution – both matter more than colour for targets of a few pixel
 but is expensive at high resolution. Rolling shutter with a short exposure works in practice;
 propeller artefacts are masked or bridged by the tracker.
 
+### Jetson options and prices (October 2026)
+
+NVIDIA raised Jetson prices by up to 101 % in July 2026
+([CNX Software](https://www.cnx-software.com/2026/07/22/nvidia-increases-the-price-of-jetson-modules-and-devkits-by-up-to-101/)).
+Module prices are list prices for 1000 units; single modules in shops cost more.
+
+| | before | now |
+|---|---|---|
+| Orin NX 16 GB module | $599 | **$999** |
+| Orin NX 8 GB module | $399 | $649 |
+| Orin Nano Super Developer Kit | $249 | **$399** |
+| AGX Orin Developer Kit | $1,999 | $3,499 |
+
+Carrier boards with GMSL2 for three cameras:
+
+| Option | GMSL2 inputs | Power input | Price | Note |
+|---|---|---|---|---|
+| [Seeed reComputer Robotics J4012 + GMSL extension](https://eu.robotshop.com/de/products/seeedstudio-recomputer-robotics-j4012-mit-gmsl-extension-mit-jetson-orin-nx-16gb) (Orin NX 16 GB, complete with enclosure) | via extension board – check count | check | ~€2,070 | quickest route to a complete unit |
+| [Forecr GMSL2 camera board](https://www.forecr.io/products/gmsl2-camera-board-for-orin-nx-orin-nano) + Forecr carrier + module | 4, Mini-FAKRA, PoC | depends on carrier | board €430 | modular, cheaper |
+| [Connect Tech Hadron GMSL](https://connecttech.com/product/hadron-gmsl-carrier-for-nvidia-jetson-orin-nx/) | **2** | 9–60 V | on request | too few inputs for 3 cameras |
+| [Syslogic RPC RS A4NX GMSL](https://www.syslogic.com/jetson-orin-nx/rugged-computer-rpc-rs-a4nx-super-gmsl) (rugged, IP67) | 4 | 9–45 V | on request | ideal for aircraft use, industrial price |
+
+**Camera, deserializer board and driver must fit together.** Choose cameras that the board
+vendor supports with a ready driver. Otherwise each new camera means driver work. Few 4K mono
+GMSL2 cameras exist; the choice of cameras limits the choice of board more than the other way round.
+
+**Recommendation:** buy only after `ota bench` on real recordings. A single camera for first
+flights works with an Orin Nano Super kit or simply a laptop / Raspberry Pi 5 as recorder.
+
+### FPGA as an alternative
+
+An FPGA (e.g. AMD Kria K26/KV260, Zynq UltraScale+, [$249 starter kit](https://www.amd.com/en/products/system-on-modules/kria/k26/kv260-vision-starter-kit.html)
+with 3 MIPI camera inputs) is a good fit for **stage 1**. The morphological filter and threshold can
+run on the pixel stream with a few line buffers, at full 4K frame rate, with a few watts and
+fixed latency. The on-chip DPU could run the crop classifier; tracker, threat logic and callouts
+stay on the ARM cores (the existing Python code).
+
+Not now: FPGA development (Vivado/Vitis HLS) takes weeks per change, and stage 1 will still change
+with the first real recordings. The plan is to stabilise the algorithms on PC/Jetson first and
+then evaluate an FPGA for a production version: lower power and heat, and the usual path for
+airborne hardware assurance (DO-254). Stage 1 is kept FPGA-friendly: fixed kernel size, integer
+arithmetic, local operations only.
+
 ## Power supply (14 V aircraft bus)
 
 * The bus is really 12–14.5 V, briefly below 9 V while cranking, with spikes when large loads switch.

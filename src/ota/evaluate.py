@@ -201,6 +201,9 @@ class SessionEvaluator:
         self.roll = float(cam.get("roll_deg") or 0.0)
         self.hfov = float(cam["hfov_deg"])
         self.mode = self.meta.get("mode", "ground")
+        self.own_icao = (self.meta.get("own_icao") or "").upper()
+        self.max_turn_dps = 3.0
+        self.excluded: dict[str, set] = defaultdict(set)
         self.targets, self.own = load_traffic(self.dir / "traffic.jsonl", self.qnh)
         self.stamps = load_timestamps(self.dir / cam.get("timestamps", "camera/cam0.timestamps.csv"))
         if cam.get("segment_files"):
@@ -226,18 +229,47 @@ class SessionEvaluator:
                                         hfov_deg=self.hfov, yaw_deg=self.heading + d_az,
                                         pitch_deg=self.pitch + d_el, roll_deg=self.roll))
 
-    def observer(self, t: float) -> tuple[tuple[float, float, float], float] | None:
-        """(lat, lon, alt) of the camera and the azimuth reference at time t."""
+    def _own_arrays(self):
+        if not hasattr(self, "_own"):
+            rows = [(r.t, r.lat, r.lon, r.alt_m if r.alt_m is not None else np.nan,
+                     r.track_deg if r.track_deg is not None else np.nan) for r in self.own]
+            a = np.array(rows, dtype=np.float64) if rows else np.zeros((0, 5))
+            if len(a):
+                a = a[np.argsort(a[:, 0])]
+                trk = a[:, 4].copy()
+                ok = ~np.isnan(trk)
+                if ok.any():  # unwrap the track so interpolation works across north
+                    trk[ok] = np.degrees(np.unwrap(np.radians(trk[ok])))
+                a[:, 4] = trk
+            self._own = a
+        return self._own
+
+    def observer(self, t: float):
+        """((lat, lon, alt) of the camera, azimuth reference, turn rate deg/s) at time t.
+
+        Ground: the station, azimuths are true. Aircraft: the own position from the
+        FLARM/GPS ``own`` reports; the camera azimuth is relative to the GPS track
+        (no attitude data yet - the heading correction absorbs a constant crab angle).
+        """
         if self.mode != "aircraft":
-            return self.station, 0.0
-        if not self.own:
+            return self.station, 0.0, 0.0
+        a = self._own_arrays()
+        if len(a) < 2:
             return None
-        ts = [r.t for r in self.own]
-        i = min(max(int(np.searchsorted(ts, t)), 0), len(ts) - 1)
-        r = self.own[i]
-        if abs(r.t - t) > 5 or r.alt_m is None:
+        i = int(np.searchsorted(a[:, 0], t))
+        if i <= 0 or i >= len(a):
             return None
-        return (r.lat, r.lon, r.alt_m), (r.track_deg or 0.0)
+        r0, r1 = a[i - 1], a[i]
+        if r1[0] - r0[0] > 3.0 or np.isnan(r0[3]) or np.isnan(r1[3]):
+            return None
+        x = (t - r0[0]) / (r1[0] - r0[0]) if r1[0] > r0[0] else 0.0
+        lat, lon, alt, trk = (r0[1:5] + x * (r1[1:5] - r0[1:5])).tolist()
+        if np.isnan(trk):
+            return None
+        j0, j1 = max(0, i - 3), min(len(a) - 1, i + 2)
+        dt = a[j1, 0] - a[j0, 0]
+        turn = (a[j1, 4] - a[j0, 4]) / dt if dt > 0 and not np.isnan(a[j0, 4] + a[j1, 4]) else 0.0
+        return (lat, lon, alt), trk % 360.0, float(turn)
 
     # -- pass 1: run the detector over the video --
 
@@ -331,13 +363,22 @@ class SessionEvaluator:
         """Yield (key, az, el, range_m, u, v) of cooperative targets near the field of view."""
         obs = self.observer(fd.t)
         if obs is None:
+            self.excluded["no_own_position"].add(fd.index)
             return
-        (la0, lo0, al0), az_ref = obs
+        (la0, lo0, al0), az_ref, turn = obs
+        if abs(turn) > self.max_turn_dps:
+            # banked: camera attitude unknown, directions unreliable
+            self.excluded["turning"].add(fd.index)
+            return
         for key, tt in self.targets.items():
+            if tt.key.split(":")[-1] == self.own_icao:
+                continue
             p = tt.at(fd.t)
             if p is None:
                 continue
             az, el, rng = look_angles(la0, lo0, al0, *p)
+            if rng < 300.0:  # the own aircraft's own transponder / FLARM
+                continue
             az = (az - az_ref) % 360.0
             uv = model.direction_to_pixel(az, el)
             yield key, az, el, rng, uv
@@ -486,6 +527,8 @@ class SessionEvaluator:
             "matched_tracks": len(self.track_target),
             "unmatched_tracks": unmatched,
             "ogn_latency_s": lat,
+            "mode": self.mode,
+            "frames_excluded": {k: len(v) for k, v in self.excluded.items()},
         }
 
     def _ogn_latency(self) -> float | None:
@@ -598,6 +641,11 @@ def render_report(s: dict) -> str:
              f"* estimated correction: heading {c['heading_deg']:+.2f}°, pitch {c['pitch_deg']:+.2f}° "
              f"from {c['pairs']} matches ({'applied' if c['applied'] else 'not applied – too few matches'})"
              f" → heading {s['camera_corrected']['heading_deg']}°, pitch {s['camera_corrected']['pitch_deg']}°"]
+    if s.get("mode") == "aircraft":
+        ex = s.get("frames_excluded") or {}
+        lines.append(f"* in-flight session: camera direction relative to the GPS track; frames excluded "
+                     f"while turning: {ex.get('turning', 0)}, without own position: "
+                     f"{ex.get('no_own_position', 0)}")
     if s.get("ogn_latency_s") is not None:
         lines.append(f"* OGN delay (receive − position time): median {s['ogn_latency_s']} s "
                      "(negative or > 10 s: check the computer clock)")

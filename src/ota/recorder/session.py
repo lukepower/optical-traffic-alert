@@ -89,6 +89,9 @@ class SessionSettings:
     ogn_local_address: str = "192.168.1.50:50001"
     flarm_enabled: bool = False
     flarm_address: str = "COM4@19200"
+    gps_enabled: bool = False          # own position (aircraft mode): USB GNSS receiver, NMEA
+    gps_address: str = "COM5@9600"
+    own_icao: str = ""                 # own transponder address (hex), excluded from traffic
     # misc
     qnh_hpa: float = 1013.25
     notes: str = ""
@@ -221,7 +224,9 @@ class CameraRecorder:
         st = self.status
         st.open, st.height, st.width = True, img.shape[0], img.shape[1]
         st.format = fourcc_str(self.cap.get(cv2.CAP_PROP_FOURCC)) or "?"
-        if self.smart and self.s.motion_trigger:
+        # In the aircraft the whole image moves (clouds, terrain, horizon) and the
+        # motion trigger would fire constantly - there only traffic triggers.
+        if self.smart and self.s.motion_trigger and self.s.mode == "ground":
             from .smart import MotionTrigger
             self.motion = MotionTrigger(self.triggers, st.width, st.height).start()
         self._threads = [threading.Thread(target=self._capture, name="cam-capture", daemon=True)]
@@ -481,6 +486,15 @@ def make_feeds(s: SessionSettings, logger: TrafficLogger) -> list[LineFeed]:
             for r in nmea.feed(line, rx):
                 logger.report(r)
         feeds.append(LineFeed("FLARM", s.flarm_address, on_nmea))
+    if s.gps_enabled and s.gps_address:
+        gps = FlarmNmeaParser()  # same parser: $GPRMC/$GPGGA give the own position
+
+        def on_gps(line: str, rx: float) -> None:
+            logger.raw("gps_nmea", line, rx)
+            for r in gps.feed(line, rx):
+                if r.src == "own":
+                    logger.report(r)
+        feeds.append(LineFeed("GPS", s.gps_address, on_gps))
     return feeds
 
 
@@ -581,17 +595,21 @@ class SessionRecorder:
         st = self.camera.status
         aspect = st.width / st.height if st.height else 16 / 9
         while not self._trig_stop.wait(1.0):
+            heading: float | None
             if s.mode == "aircraft":
                 own = self.logger.table.ownship()
-                if own is None or own.lat is None or own.track_deg is None:
-                    observer, heading = None, 0.0
+                if own is None or own.lat is None or own.track_deg is None \
+                        or time.time() - own.rx > 10:
+                    # own position unknown: any aircraft within the radius of the home field
+                    observer, heading = (s.lat, s.lon, s.elev_m), None
                 else:
                     observer = (own.lat, own.lon, own.alt_m if own.alt_m is not None else s.elev_m)
                     heading = own.track_deg + s.cam_heading_deg
             else:
                 observer, heading = (s.lat, s.lon, s.elev_m), s.cam_heading_deg
             hits = traffic_in_view(self.logger.table, observer, heading, s.cam_pitch_deg,
-                                   s.hfov_deg, aspect, s.trigger_radius_km)
+                                   s.hfov_deg, aspect, s.trigger_radius_km,
+                                   exclude={s.own_icao.strip().upper()} - {""})
             self.traffic_hits = hits
             if hits:
                 self.triggers.add(time.time(), "traffic")
@@ -626,6 +644,7 @@ class SessionRecorder:
             "mode": s.mode,
             "station": {"name": s.station_name, "lat": s.lat, "lon": s.lon, "elev_m": s.elev_m},
             "qnh_hpa": s.qnh_hpa,
+            "own_icao": s.own_icao.strip().upper(),
             "camera": None if not s.camera_enabled else {
                 "source": s.camera_source, "name": "cam0",
                 "requested": {"width": s.width, "height": s.height, "fps": s.fps,
@@ -648,6 +667,7 @@ class SessionRecorder:
                 "ogn_online": f"{OGN_SERVER} r={s.ogn_radius_km:.0f}km" if s.ogn_online else None,
                 "ogn_local": s.ogn_local_address if s.ogn_local else None,
                 "flarm": s.flarm_address if s.flarm_enabled else None,
+                "gps": s.gps_address if s.gps_enabled else None,
             },
             "stats": self.stats(),
         }

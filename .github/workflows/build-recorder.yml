@@ -30,8 +30,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install . pyserial boto3 pyinstaller pytest "moto[server]"
 
-      - name: Unit tests (traffic feeds, geometry, upload)
-        run: pytest -q tests/test_traffic_feeds.py tests/test_geometry.py tests/test_upload.py
+      - name: Unit tests (feeds, geometry, upload, ingest, review)
+        run: pytest -q tests/test_traffic_feeds.py tests/test_geometry.py tests/test_upload.py tests/test_ingest.py
 
       - name: Build exe
         run: >

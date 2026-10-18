@@ -28,8 +28,9 @@ Note weather, sun position and anything notable (non-cooperative traffic, birds)
 * Fix the camera behind the windscreen, with a sun shade.
 * Stow the laptop securely; nothing may come loose in turbulence.
 * Record only, no warnings – evaluation happens on the ground.
-* Record traffic in parallel (OTA Recorder in *aircraft* mode, with the FLARM data port for the own
-  position) for ground truth.
+* Record traffic in parallel (OTA Recorder in *aircraft* mode, with a USB GPS receiver or the FLARM
+  data port for the own position) for ground truth. See
+  [recorder.md](recorder.md#in-the-aircraft-eg-club-or-school-aircraft).
 * Operation must not interfere with flying: start recording before engine start, stop after shutdown.
 
 ## Evaluation
