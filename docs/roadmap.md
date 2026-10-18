@@ -31,5 +31,10 @@
 - [ ] Targets below the horizon (terrain background, motion compensation)
 - [ ] Temporal classifier (motion pattern: bird vs. aircraft) – main weakness of the frame classifier
 - [ ] FLARM reception (868 MHz, OGN) in the fusion
+- [ ] **EFB output**: Wi-Fi access point with **GDL 90** (UDP 4000; ForeFlight, SkyDemon, EasyVFR,
+      Enroute, Airmate …) and **FLARM NMEA** (TCP 2000; XCSoar, Air Navigation Pro, SkyDemon via BLE).
+      Ownship from GNSS, ADS-B/FLARM traffic from the SDRs, optical targets with an estimated position
+      (range from apparent size, flagged as low accuracy) or as bearing-only alerts (`$PFLAU`).
+      Evaluate building on Stratux instead of a separate GDL 90 server.
 - [ ] Range estimate from aircraft type / wingspan
 - [ ] Lens distortion, sun/glare detection
