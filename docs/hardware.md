@@ -13,6 +13,17 @@ The full bill of materials with prices (October 2026, EUR) is in
 | Second SDR for FLARM/OGN (868 MHz) | optional; needs a Raspberry Pi with OGN software (no Windows decoder), or use OGN online / a FLARM data port instead ([recorder.md](recorder.md#getting-flarm-locally-second-sdr-stick)) | ~€50 + Pi |
 | Audio | USB audio adapter, intercom cable, ground-loop isolator | €65 |
 
+**Measured with the Svpro IMX415 (Windows 11, `tools\camera_check.bat`):**
+
+| Path | 4K format really delivered | fps |
+|---|---|---|
+| DirectShow (`usb:N`) | **YUY2, uncompressed** | **~16** |
+| Media Foundation (`msmf:N`) | always MJPG (the requested format is ignored) | ~30 |
+
+Use the DirectShow source (`usb:N`) and 15 fps. The camera needs a USB 3 port directly on the
+mainboard (rear panel): on a front-panel port it dropped off the bus as soon as streaming started,
+and DirectShow could not open it at all.
+
 This is enough to develop and ground-test the whole pipeline. The zoom lens is for finding the best
 field of view on the ground; for flight a fixed 6–8 mm lens is needed (vibration).
 
