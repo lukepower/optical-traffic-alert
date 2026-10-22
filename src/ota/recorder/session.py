@@ -133,9 +133,10 @@ def open_capture(source: str, s: SessionSettings) -> cv2.VideoCapture:
         if not cap.isOpened():
             raise RuntimeError(f"cannot open video file {arg}")
         return cap
-    from ..sources import open_usb_camera
-    return open_usb_camera(int(arg or 0), s.width, s.height, s.fps, s.pixel_format,
-                           s.exposure, s.gain)
+    from ..sources import open_usb_camera, parse_camera
+    kind, index = parse_camera(source)
+    return open_usb_camera(index, s.width, s.height, s.fps, s.pixel_format, s.exposure, s.gain,
+                           kind=kind)
 
 
 # --- camera ---------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@
 # 4. measures how fast this PC runs the detector at 4K (ota bench)
 # Everything is written to data\raw\camera_check.txt.
 
-param([int]$MaxCameras = 3)
+param([int]$MaxCameras = 4)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -51,18 +51,30 @@ try {
     Step "System"
     Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors |
         Format-Table | Out-String | Write-Host
-    Get-PnpDevice -Class Camera, Image -Status OK -ErrorAction SilentlyContinue |
-        Select-Object FriendlyName, InstanceId | Format-Table -AutoSize | Out-String | Write-Host
+    $cams = Get-PnpDevice -Class Camera, Image -Status OK -ErrorAction SilentlyContinue
+    $cams | Select-Object FriendlyName, Class, InstanceId | Format-Table -AutoSize | Out-String | Write-Host
+    foreach ($c in $cams | Where-Object { $_.InstanceId -like "USB*" }) {
+        $props = Get-PnpDeviceProperty -InstanceId $c.InstanceId -KeyName `
+            DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider, DEVPKEY_Device_Service `
+            -ErrorAction SilentlyContinue
+        Write-Host ("{0}: driver {1} / {2} / service {3}" -f $c.FriendlyName,
+            ($props | Where-Object KeyName -eq DEVPKEY_Device_DriverInfPath).Data,
+            ($props | Where-Object KeyName -eq DEVPKEY_Device_DriverProvider).Data,
+            ($props | Where-Object KeyName -eq DEVPKEY_Device_Service).Data)
+    }
 
     Step "Cameras"
     $list = Run $vpy @("-m", "ota", "cameras", "--max", "6")
-    $indices = @($list | Select-String -Pattern '^usb:(\d+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
-    if ($indices.Count -eq 0) { throw "No camera found. Is it plugged in (blue USB 3 port)? Close other camera apps." }
+    # skip virtual cameras and webcams that are certainly not the test camera
+    $sources = @($list | Where-Object { $_ -match '^(usb|msmf):\d+' -and $_ -notmatch 'BRIO|Eyeware|OBS|Virtual' } |
+        ForEach-Object { ($_ -split '\s+')[0] })
+    if ($sources.Count -eq 0) { throw "No camera found. Is it plugged in (blue USB 3 port)? Close other camera apps." }
 
-    foreach ($i in $indices | Select-Object -First $MaxCameras) {
-        Step "Probe usb:$i (takes about a minute)"
-        Run $vpy @("-m", "ota", "probe", "--camera", "usb:$i", "--fps", "30", "--frames", "30",
-                   "--snapshot", "data\raw\probe_4k_usb$i.png") | Out-Null
+    foreach ($src in $sources | Select-Object -First $MaxCameras) {
+        $tag = $src -replace ':', ''
+        Step "Probe $src (takes about a minute)"
+        Run $vpy @("-m", "ota", "probe", "--camera", $src, "--fps", "30", "--frames", "20",
+                   "--snapshot", "data\raw\probe_4k_$tag.png") | Out-Null
     }
 
     Step "Speed of this PC at 4K"

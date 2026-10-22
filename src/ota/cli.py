@@ -89,12 +89,13 @@ def _cmd_record(args) -> int:
     from .config import CameraConfig
     from .sources import UsbCameraSource
 
-    index = int(args.camera.split(":")[-1])
+    from .sources import parse_camera
+    kind, index = parse_camera(args.camera)
     cam = CameraConfig(name="rec", source=args.camera, width=args.width, height=args.height,
                        fps=args.fps, pixel_format=args.format, exposure=args.exposure,
                        gain=args.gain)
     # record every frame the camera delivers (no dropping)
-    src = UsbCameraSource(cam, index, latest_only=False)
+    src = UsbCameraSource(cam, index, latest_only=False, kind=kind)
     w, h = src.size
     writer, path = _open_writer(args.out, args.codec, args.fps, (w, h))
     stamps = open(path.with_suffix(".timestamps.csv"), "w", encoding="utf-8")
@@ -316,9 +317,9 @@ def _cmd_probe(args) -> int:
     """Try resolutions and pixel formats and report what the camera really delivers."""
     import time
     import cv2
-    from .sources import fourcc_str, open_usb_camera
+    from .sources import fourcc_str, open_usb_camera, parse_camera
 
-    index = int(args.camera.split(":")[-1])
+    kind, index = parse_camera(args.camera)
     modes = [(3840, 2160), (2560, 1440), (1920, 1080)]
     print(f"Probing {args.camera} ({args.frames} frames per mode)\n")
     print(f"{'requested':>22} | {'delivered':>11} {'format':>6} {'fps':>6}")
@@ -327,7 +328,7 @@ def _cmd_probe(args) -> int:
     for fmt in ("YUY2", "MJPG"):
         for w, h in modes:
             try:
-                cap = open_usb_camera(index, w, h, args.fps, fmt)
+                cap = open_usb_camera(index, w, h, args.fps, fmt, kind=kind)
             except RuntimeError as e:
                 print(e)
                 return 1
@@ -441,6 +442,16 @@ def _cmd_cameras(args) -> int:
         elif name:
             print(f"--      CANNOT OPEN usb:{i}{name}  - in use by another program, or driver problem")
         cap.release()
+    if win:
+        # Media Foundation lists cameras that DirectShow cannot open (e.g. some UVC 1.5 devices)
+        for i in range(args.max):
+            cap = cv2.VideoCapture(i, cv2.CAP_MSMF)
+            if cap.isOpened():
+                ok, img = cap.read()
+                w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                print(f"msmf:{i}  default {w}x{h}" + ("" if ok else "  (no image)"))
+                found = True
+            cap.release()
     if not found:
         print("No cameras found.")
     return 0

@@ -318,7 +318,7 @@ class RecorderApp:
                         variable=self.var("camera_enabled", s.camera_enabled, tk.BooleanVar)
                         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6)
         fr = ttk.Frame(f)
-        self.cam_box = ttk.Combobox(fr, values=["usb:0", "usb:1", "usb:2", "usb:3"], width=12,
+        self.cam_box = ttk.Combobox(fr, values=["usb:0", "usb:1", "usb:2", "usb:3", "msmf:0", "msmf:1", "msmf:2"], width=12,
                                     textvariable=self.var("camera_source", s.camera_source))
         self.cam_box.pack(side="left", fill="x", expand=True)
         ttk.Button(fr, text=self.t("search"), command=self.find_cameras).pack(side="left")
@@ -553,14 +553,16 @@ class RecorderApp:
     def find_cameras(self) -> None:
         backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
         found = []
-        for i in range(6):
-            if self.preview_cam and self.vars["camera_source"].get() == f"usb:{i}":
-                found.append(f"usb:{i}")
-                continue
-            cap = cv2.VideoCapture(i, backend)
-            if cap.isOpened():
-                found.append(f"usb:{i}")
-            cap.release()
+        tries = [("usb", backend)] + ([("msmf", cv2.CAP_MSMF)] if platform.system() == "Windows" else [])
+        for kind, be in tries:
+            for i in range(6):
+                if self.preview_cam and self.vars["camera_source"].get() == f"{kind}:{i}":
+                    found.append(f"{kind}:{i}")
+                    continue
+                cap = cv2.VideoCapture(i, be)
+                if cap.isOpened():
+                    found.append(f"{kind}:{i}")
+                cap.release()
         self.cam_box.configure(values=found or ["usb:0"])
         if found and self.vars["camera_source"].get() not in found:
             self.vars["camera_source"].set(found[0])

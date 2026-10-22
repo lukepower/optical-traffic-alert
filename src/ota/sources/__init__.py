@@ -7,20 +7,25 @@ Source strings (``CameraConfig.source``):
 
 * ``file:path/to/video.mp4`` - recorded video, timestamps from the file's fps
 * ``usb:0``                  - OpenCV camera index (DirectShow on Windows)
+* ``msmf:0``                 - Windows Media Foundation index (cameras DirectShow cannot open)
 * ``gmsl:0``                 - Jetson GMSL2 camera via GStreamer (not yet implemented)
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import threading
 import time
 from dataclasses import dataclass
 from typing import Iterator
 
-import cv2
-import numpy as np
+# Media Foundation: skip the slow hardware-transform probing when a camera is opened
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
 
 from ..config import CameraConfig
 
@@ -98,16 +103,34 @@ def fourcc_str(value: float) -> str:
     return s if s and all(32 <= ord(c) < 127 for c in s) else (f"0x{v:08X}" if v else "?")
 
 
+BACKENDS = {"usb": None, "dshow": "CAP_DSHOW", "msmf": "CAP_MSMF", "v4l2": "CAP_V4L2"}
+
+
+def parse_camera(source: str) -> tuple[str, int]:
+    """'usb:1' -> ('usb', 1); 'msmf:0' -> ('msmf', 0)."""
+    kind, _, arg = source.partition(":")
+    if kind not in BACKENDS:
+        raise ValueError(f"unknown camera source {source!r} (use usb:N or msmf:N)")
+    return kind, int(arg or 0)
+
+
+def _backend(kind: str) -> int:
+    if kind == "usb":
+        return cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+    return getattr(cv2, BACKENDS[kind])
+
+
 def open_usb_camera(index: int, width: int, height: int, fps: float, pixel_format: str = "YUY2",
-                    exposure: float | None = None, gain: float | None = None) -> cv2.VideoCapture:
+                    exposure: float | None = None, gain: float | None = None,
+                    kind: str = "usb") -> cv2.VideoCapture:
     """Open a UVC camera and request format, size and frame rate.
 
+    ``kind``: 'usb' (DirectShow on Windows), 'msmf' (Media Foundation), 'v4l2'.
     The camera may silently choose something else - always check the
     returned capture's CAP_PROP_* values (``ota probe`` does that)."""
-    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
-    cap = cv2.VideoCapture(index, backend)
+    cap = cv2.VideoCapture(index, _backend(kind))
     if not cap.isOpened():
-        raise RuntimeError(f"Cannot open camera {index}")
+        raise RuntimeError(f"Cannot open camera {kind}:{index}")
     if pixel_format:
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*pixel_format[:4].ljust(4)))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
@@ -115,7 +138,8 @@ def open_usb_camera(index: int, width: int, height: int, fps: float, pixel_forma
     cap.set(cv2.CAP_PROP_FPS, fps)
     if exposure is not None:
         # DirectShow: 0.25 = manual; V4L2: 1 = manual
-        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25 if platform.system() == "Windows" else 1)
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25 if kind in ("usb", "dshow") and
+                platform.system() == "Windows" else 1)
         cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
     if gain is not None:
         cap.set(cv2.CAP_PROP_GAIN, gain)
@@ -132,10 +156,10 @@ class UsbCameraSource(FrameSource):
     warning system, where a 2-second-old frame is useless.
     """
 
-    def __init__(self, cam: CameraConfig, index: int, latest_only: bool = True):
+    def __init__(self, cam: CameraConfig, index: int, latest_only: bool = True, kind: str = "usb"):
         super().__init__(cam)
         self.cap = open_usb_camera(index, cam.width, cam.height, cam.fps, cam.pixel_format,
-                                   cam.exposure, cam.gain)
+                                   cam.exposure, cam.gain, kind=kind)
         self._w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.format = fourcc_str(self.cap.get(cv2.CAP_PROP_FOURCC))
@@ -197,8 +221,8 @@ def open_source(cam: CameraConfig, realtime: bool = False, loop: bool = False) -
     kind, _, arg = cam.source.partition(":")
     if kind == "file":
         return VideoFileSource(cam, arg, realtime=realtime, loop=loop)
-    if kind == "usb":
-        return UsbCameraSource(cam, int(arg or 0))
+    if kind in ("usb", "msmf", "dshow", "v4l2"):
+        return UsbCameraSource(cam, int(arg or 0), kind=kind)
     if kind == "gmsl":
         raise NotImplementedError(
             "GMSL2 cameras are planned for the Jetson phase. "
