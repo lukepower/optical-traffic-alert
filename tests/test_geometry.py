@@ -73,3 +73,20 @@ def test_direction_to_pixel_roundtrip():
         uu, vv = m.direction_to_pixel(d.azimuth_deg, d.elevation_deg)
         assert abs(uu - u) < 1e-6 and abs(vv - v) < 1e-6
     assert m.direction_to_pixel(10, 0) is None  # behind the camera
+
+
+def test_sky_mask_ignores_bright_patches_below_horizon_and_border():
+    import cv2
+    import numpy as np
+    from ota.config import DetectorConfig
+    from ota.detection.candidates import CandidateDetector
+    img = np.full((720, 1280), 200, np.uint8)          # sky
+    img[400:] = 60                                     # terrain
+    img[550:650, 300:500] = 230                        # white wall below the horizon
+    for x, y in ((400, 600), (900, 200), (5, 200)):     # dot on the wall, in the sky, at the border
+        cv2.circle(img, (x, y), 2, 20, -1)
+    det = CandidateDetector(DetectorConfig(pyramid_scales=[1.0]))
+    sky = det.sky_mask(img)
+    assert sky[100, 640] == 255 and sky[600, 400] == 0
+    found = {(round(c.x / 100), round(c.y / 100)) for c in det.detect(img)}
+    assert (9, 2) in found and (4, 6) not in found and (0, 2) not in found

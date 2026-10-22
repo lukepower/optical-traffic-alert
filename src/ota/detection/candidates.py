@@ -83,6 +83,12 @@ class CandidateDetector:
         thumb = cv2.GaussianBlur(thumb, (0, 0), 2)
         _, sky = cv2.threshold(thumb, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         sky = cv2.morphologyEx(sky, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        if self.cfg.sky_connected_top:
+            n, lab = cv2.connectedComponents(sky)
+            top = set(np.unique(lab[0, :])) - {0}
+            if not top and n > 1:  # nothing touches the top (e.g. steep bank): largest region
+                top = {int(np.argmax(np.bincount(lab.ravel())[1:])) + 1}
+            sky = np.isin(lab, list(top)).astype(np.uint8) * 255
         margin = max(1, int(round(self.cfg.sky_margin_px / f)))
         sky = cv2.erode(sky, np.ones((2 * margin + 1, 2 * margin + 1), np.uint8))
         return cv2.resize(sky, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -119,6 +125,10 @@ class CandidateDetector:
                 if not inside:
                     results.append(c)
 
+        if cfg.border_px > 0:
+            h, w = gray_full.shape
+            b = cfg.border_px
+            results = [c for c in results if b <= c.x < w - b and b <= c.y < h - b]
         results.sort(key=lambda c: c.contrast, reverse=True)
         return results[: cfg.max_candidates]
 

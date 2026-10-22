@@ -58,6 +58,17 @@ class OpenVinoClassifier(Classifier):
         self.cfg = cfg
         core = ov.Core()
         model = core.read_model(cfg.model_path)
+        # Dynamic batch: all crops of a frame in one inference call (much faster
+        # than one call per crop). Falls back to batch 1 if the model refuses.
+        self.batched = False
+        try:
+            inp = model.input(0)
+            shape = inp.get_partial_shape()
+            shape[0] = -1
+            model.reshape({inp.get_any_name(): shape})
+            self.batched = True
+        except Exception as e:  # pragma: no cover - depends on the exported model
+            log.info("classifier: dynamic batch not possible (%s), using batch 1", e)
         self.compiled = core.compile_model(model, cfg.device)
         self.output = self.compiled.output(0)
         log.info("OpenVINO classifier %s on %s", cfg.model_path, cfg.device)
@@ -77,11 +88,14 @@ class OpenVinoClassifier(Classifier):
                 patch = cv2.cvtColor(patch, cv2.COLOR_GRAY2BGR)
             patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             batch.append(patch.transpose(2, 0, 1))
+        if self.batched:
+            outs = np.asarray(self.compiled([np.stack(batch)])[self.output], dtype=np.float32)
+        else:
+            outs = np.stack([np.asarray(self.compiled([x[None]])[self.output][0], dtype=np.float32)
+                             for x in batch])
         accepted = []
-        # One crop per inference call keeps the model input static (1x3xSxS)
-        for c, x in zip(candidates, batch):
-            out = self.compiled([x[None]])[self.output][0]
-            p = _softmax(np.asarray(out, dtype=np.float32).ravel())
+        for c, out in zip(candidates, outs):
+            p = _softmax(out.ravel())
             c.score = float(p[self.cfg.aircraft_class])
             if c.score >= self.cfg.min_probability:
                 accepted.append(c)

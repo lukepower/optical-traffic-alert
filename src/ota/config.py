@@ -88,6 +88,12 @@ class DetectorConfig:
     sky_only: bool = True
     # Margin (px, full resolution) kept free along the horizon edge
     sky_margin_px: int = 24
+    # Keep only sky regions connected to the top image edge. Bright patches
+    # below the horizon (white walls, rock faces, sunlit larches, snow) are
+    # otherwise taken for sky and produce false targets.
+    sky_connected_top: bool = True
+    # Ignore candidates this close to the image border (filter edge effects).
+    border_px: int = 24
     detect_dark: bool = True
     detect_bright: bool = True
 

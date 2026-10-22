@@ -27,6 +27,8 @@ detector:
   max_background_std: 18   # reject candidates on non-uniform background (horizon, terrain); 0 = off
   sky_only: true           # phase 1: search only in the sky region (per-frame segmentation)
   sky_margin_px: 24        # keep this distance from the horizon edge
+  sky_connected_top: true  # sky = bright regions connected to the top edge (not white walls, rocks, larches)
+  border_px: 24            # ignore candidates at the image border
 
 classifier:
   backend: auto            # auto (openvino if models/classifier.xml exists) | none | openvino
