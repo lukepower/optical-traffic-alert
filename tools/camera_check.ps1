@@ -7,7 +7,8 @@
 # 4. measures how fast this PC runs the detector at 4K (ota bench)
 # Everything is written to data\raw\camera_check.txt.
 
-param([int]$MaxCameras = 4)
+# Options: -Camera msmf:1  (probe only this camera)   -Only4k   -NoBench
+param([int]$MaxCameras = 4, [string]$Camera = "", [switch]$Only4k, [switch]$NoBench)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -68,17 +69,22 @@ try {
     # skip virtual cameras and webcams that are certainly not the test camera
     $sources = @($list | Where-Object { $_ -match '^(usb|msmf):\d+' -and $_ -notmatch 'BRIO|Eyeware|OBS|Virtual' } |
         ForEach-Object { ($_ -split '\s+')[0] })
+    if ($Camera) { $sources = @($Camera) }
     if ($sources.Count -eq 0) { throw "No camera found. Is it plugged in (blue USB 3 port)? Close other camera apps." }
 
     foreach ($src in $sources | Select-Object -First $MaxCameras) {
         $tag = $src -replace ':', ''
         Step "Probe $src (takes about a minute)"
-        Run $vpy @("-m", "ota", "probe", "--camera", $src, "--fps", "30", "--frames", "20",
-                   "--snapshot", "data\raw\probe_4k_$tag.png") | Out-Null
+        $pargs = @("-m", "ota", "probe", "--camera", $src, "--fps", "30", "--frames", "20",
+                   "--snapshot", "data\raw\probe_4k_$tag.png")
+        if ($Only4k) { $pargs += "--only-4k" }
+        Run $vpy $pargs | Out-Null
     }
 
-    Step "Speed of this PC at 4K"
-    Run $vpy @("-m", "ota", "bench") | Out-Null
+    if (-not $NoBench) {
+        Step "Speed of this PC at 4K"
+        Run $vpy @("-m", "ota", "bench") | Out-Null
+    }
 
     Step "Done"
     Write-Host "Results: $Log" -ForegroundColor Green

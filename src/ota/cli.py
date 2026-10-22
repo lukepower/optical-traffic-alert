@@ -314,24 +314,24 @@ def _cmd_imu_check(args) -> int:
 
 
 def _cmd_probe(args) -> int:
-    """Try resolutions and pixel formats and report what the camera really delivers."""
+    """Try resolutions, pixel formats and frame rates; report what the camera really delivers.
+
+    Uncompressed 4K (YUY2) often exists only at a lower frame rate than MJPG, so 4K YUY2
+    is retried at 15, 10 and 5 fps if the requested rate fails."""
     import time
     import cv2
     from .sources import fourcc_str, open_usb_camera, parse_camera
 
     kind, index = parse_camera(args.camera)
-    modes = [(3840, 2160), (2560, 1440), (1920, 1080)]
+    modes = [(3840, 2160)] if args.only_4k else [(3840, 2160), (2560, 1440), (1920, 1080)]
     print(f"Probing {args.camera} ({args.frames} frames per mode)\n")
-    print(f"{'requested':>22} | {'delivered':>11} {'format':>6} {'fps':>6}")
-    print("-" * 52)
-    best = None
-    for fmt in ("YUY2", "MJPG"):
-        for w, h in modes:
-            try:
-                cap = open_usb_camera(index, w, h, args.fps, fmt, kind=kind)
-            except RuntimeError as e:
-                print(e)
-                return 1
+    print(f"{'requested':>22} | {'delivered':>11} {'format':>10} {'fps':>6}")
+    print("-" * 56)
+    snaps: dict[str, object] = {}
+
+    def measure(fmt: str, w: int, h: int, fps_req: float):
+        cap = open_usb_camera(index, w, h, fps_req, fmt, kind=kind)
+        try:
             ok, img = cap.read()  # first frame can be slow
             t0 = time.perf_counter()
             n = 0
@@ -339,18 +339,36 @@ def _cmd_probe(args) -> int:
                 ok, img = cap.read()
                 n += ok
             dt = time.perf_counter() - t0
-            gw, gh = (img.shape[1], img.shape[0]) if img is not None else (0, 0)
+            gw, gh = (img.shape[1], img.shape[0]) if img is not None and n else (0, 0)
             got = fourcc_str(cap.get(cv2.CAP_PROP_FOURCC)) or "?"
             fps = n / dt if dt > 0 else 0
-            print(f"{fmt:>5} {w:>5}x{h:<5} @{args.fps:>3.0f} | {gw:>5}x{gh:<5} {got:>6} {fps:6.1f}")
-            if img is not None and gw == 3840 and best is None:
-                best = (fmt, img)
+            print(f"{fmt:>5} {w:>5}x{h:<5} @{fps_req:>3.0f} | {gw:>5}x{gh:<5} {got:>10} {fps:6.1f}",
+                  flush=True)
+            return (img if gw else None), gw
+        finally:
             cap.release()
-    if best:
+
+    for fmt in ("YUY2", "MJPG"):
+        for w, h in modes:
+            rates = [args.fps] + ([r for r in (15, 10, 5) if r < args.fps]
+                                  if (w, h) == (3840, 2160) and fmt == "YUY2" else [])
+            for r in rates:
+                try:
+                    img, gw = measure(fmt, w, h, r)
+                except RuntimeError as e:
+                    print(e)
+                    return 1
+                if gw == 3840 and fmt not in snaps:
+                    snaps[fmt] = img
+                if gw == w:
+                    break
+    if snaps:
         out = Path(args.snapshot)
         out.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out), best[1])
-        print(f"\n4K snapshot ({best[0]}) saved losslessly to {out}")
+        for fmt, img in snaps.items():
+            path = out if fmt == next(iter(snaps)) else out.with_name(f"{out.stem}_{fmt.lower()}{out.suffix}")
+            cv2.imwrite(str(path), img)
+            print(f"\n4K snapshot ({fmt}) saved losslessly to {path}")
         print("Zoom into it: are single pixels sharp, or blocky (compression)?")
     else:
         print("\nNo 4K mode delivered.")
@@ -592,6 +610,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--fps", type=float, default=30.0)
     pr.add_argument("--frames", type=int, default=30)
     pr.add_argument("--snapshot", default="data/raw/probe_4k.png")
+    pr.add_argument("--only-4k", action="store_true", help="test 3840x2160 only (faster)")
     pr.set_defaults(func=_cmd_probe)
 
     b = sub.add_parser("bench", help="measure processing speed on this machine")
