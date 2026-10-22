@@ -313,6 +313,39 @@ def _cmd_imu_check(args) -> int:
     return 0
 
 
+def _cmd_session_stats(args) -> int:
+    """Check a recorded session: real frame rate, gaps, dropped frames, data rate."""
+    import csv
+    import numpy as np
+    folder = Path(args.session)
+    meta = json.loads((folder / "session.json").read_text(encoding="utf-8"))
+    cam = meta.get("camera") or {}
+    st = (meta.get("stats") or {}).get("camera", {})
+    rows = []
+    with open(folder / cam.get("timestamps", "camera/cam0.timestamps.csv"), encoding="utf-8") as f:
+        rows = sorted(float(r["t_wall"]) for r in csv.DictReader(f))
+    if len(rows) < 2:
+        print("No frames recorded.")
+        return 1
+    t = np.array(rows)
+    d = np.diff(t)
+    med = float(np.median(d))
+    dur = t[-1] - t[0]
+    size = sum(p.stat().st_size for p in (folder / "camera").glob("*.*") if p.suffix != ".csv")
+    req = (cam.get("requested") or {}).get("fps")
+    print(f"Session   {folder.name}")
+    print(f"Camera    {cam.get('source')}  {(cam.get('actual') or {}).get('width')}x"
+          f"{(cam.get('actual') or {}).get('height')}  {(cam.get('actual') or {}).get('format')}")
+    print(f"Frames    {len(t)} in {dur:.1f} s = {(len(t) - 1) / dur:.2f} fps (requested {req})")
+    print(f"Interval  median {med * 1000:.1f} ms, max {d.max() * 1000:.0f} ms, "
+          f"gaps > 1.5x median: {int((d > 1.5 * med).sum())}")
+    print(f"Dropped   {st.get('dropped', '?')} frames in the recorder (writer too slow)")
+    print(f"Data      {size / 1e9:.2f} GB = {size / 1e6 / dur:.0f} MB/s = {size / 1e9 / dur * 60:.1f} GB/min")
+    ok = st.get("dropped", 0) == 0 and int((d > 1.5 * med).sum()) <= max(1, len(t) // 200)
+    print("Result    " + ("OK - no frames lost" if ok else "frames lost - see above"))
+    return 0
+
+
 def _cmd_probe(args) -> int:
     """Try resolutions, pixel formats and frame rates; report what the camera really delivers.
 
@@ -616,6 +649,10 @@ def build_parser() -> argparse.ArgumentParser:
     ic = sub.add_parser("imu-check", help="live view of the attitude sensor (axes, rate)")
     ic.add_argument("--port", default="COM6@115200")
     ic.set_defaults(func=_cmd_imu_check)
+
+    sx = sub.add_parser("session-stats", help="check a recorded session: frame rate, gaps, drops")
+    sx.add_argument("session")
+    sx.set_defaults(func=_cmd_session_stats)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")
