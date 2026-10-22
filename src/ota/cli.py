@@ -392,6 +392,84 @@ def _cmd_adsb_check(args) -> int:
     return 0
 
 
+def _list_ports():
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        print("pyserial missing: pip install pyserial")
+        return []
+    return list(list_ports.comports())
+
+
+def _cmd_ports(args) -> int:
+    """List serial (COM) ports with USB IDs - GPS, FLARM, IMU adapters."""
+    known = {0x1546: "u-blox GPS", 0x067B: "Prolific USB-serial (often GPS)", 0x1A86: "CH340 USB-serial",
+             0x10C4: "CP210x USB-serial", 0x0403: "FTDI USB-serial"}
+    ports = _list_ports()
+    if not ports:
+        print("No COM ports found.")
+    for p in ports:
+        hint = known.get(p.vid or -1, "")
+        ids = f"{p.vid:04X}:{p.pid:04X}" if p.vid else "-"
+        print(f"{p.device:<8} {ids:<10} {p.description}  {hint}")
+    return 0
+
+
+def _cmd_gps_check(args) -> int:
+    """Read a GPS receiver (NMEA) for a while: fix, satellites, position, update rate."""
+    from .sensors.feeds import LineFeed
+    from .sensors.flarm import FlarmNmeaParser
+    port = args.port
+    if port == "auto":
+        cands = [p for p in _list_ports() if p.vid == 0x1546] or \
+                [p for p in _list_ports() if p.vid in (0x067B, 0x1A86, 0x10C4, 0x0403)]
+        if not cands:
+            print("No GPS receiver found automatically - see 'ota ports' and use --port COMx@9600")
+            return 1
+        port = f"{cands[0].device}@{args.baud}"
+    parser = FlarmNmeaParser()
+    st = {"lines": 0, "rmc": 0, "sats": None, "fixq": None, "last": None, "talkers": set()}
+
+    def on_line(line: str, rx: float) -> None:
+        st["lines"] += 1
+        if line.startswith("$") and len(line) > 6:
+            st["talkers"].add(line[1:6])
+        f = line.split("*")[0].split(",")
+        if f[0][3:] == "GGA" and len(f) > 9:
+            st["fixq"], st["sats"] = f[6], f[7]
+        for r in parser.feed(line, rx):
+            if r.src == "own":
+                st["rmc"] += 1
+                st["last"] = r
+
+    feed = LineFeed("GPS", port, on_line, retry_s=2).start()
+    print(f"Reading {port} for {args.seconds:.0f} s (outdoors or at a window - a first fix can take 1-2 minutes)")
+    t0 = time.time()
+    n0 = 0
+    try:
+        while time.time() - t0 < args.seconds:
+            time.sleep(5)
+            r = st["last"]
+            rate = (st["rmc"] - n0) / 5.0
+            n0 = st["rmc"]
+            pos = (f"{r.lat:.5f} {r.lon:.5f}  alt {r.alt_m if r.alt_m is not None else float('nan'):.0f} m  "
+                   f"{(r.gs_kt or 0):.0f} kt" if r else "no fix yet")
+            state = "connected" if feed.connected else f"NOT connected ({feed.error or 'waiting'})"
+            print(f"  {time.time() - t0:4.0f}s  {state}  lines {st['lines']:5d}  fix quality {st['fixq']}  "
+                  f"satellites {st['sats']}  {rate:.1f} fixes/s  {pos}", flush=True)
+    except KeyboardInterrupt:
+        pass
+    feed.stop()
+    print(f"\nSentences seen: {', '.join(sorted(st['talkers'])) or 'none'}")
+    if not st["lines"]:
+        print("No data: wrong COM port or baud rate (try 4800, 9600, 38400, 115200)?")
+    elif not st["last"]:
+        print("Data but no position fix yet: put the receiver at a window / outdoors and wait 1-2 minutes.")
+    else:
+        print("GPS OK. In the OTA Recorder enter this port under 'GPS receiver': " + port)
+    return 0
+
+
 def _cmd_probe(args) -> int:
     """Try resolutions, pixel formats and frame rates; report what the camera really delivers.
 
@@ -707,6 +785,15 @@ def build_parser() -> argparse.ArgumentParser:
     ab.add_argument("--lon", type=float, default=11.3264)
     ab.add_argument("--elev", type=float, default=241.0, help="m above MSL")
     ab.set_defaults(func=_cmd_adsb_check)
+
+    po = sub.add_parser("ports", help="list COM ports (GPS, FLARM, IMU adapters)")
+    po.set_defaults(func=_cmd_ports)
+
+    gc = sub.add_parser("gps-check", help="read a GPS receiver: fix, satellites, rate")
+    gc.add_argument("--port", default="auto", help="COMx@baud, or 'auto' (u-blox / USB-serial)")
+    gc.add_argument("--baud", type=int, default=9600)
+    gc.add_argument("--seconds", type=float, default=90)
+    gc.set_defaults(func=_cmd_gps_check)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")
