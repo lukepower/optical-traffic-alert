@@ -346,6 +346,52 @@ def _cmd_session_stats(args) -> int:
     return 0
 
 
+def _cmd_adsb_check(args) -> int:
+    """Connect to dump1090's SBS port for a while and list the aircraft received."""
+    from .sensors.adsb import SbsParser, sbs_report
+    from .sensors.feeds import LineFeed
+    from .sensors.traffic import TrafficTable, look_angles
+
+    parser, table = SbsParser(), TrafficTable()
+    counts = {"lines": 0, "positions": 0}
+
+    def on_line(line: str, rx: float) -> None:
+        counts["lines"] += 1
+        r = sbs_report(parser, line, rx)
+        if r:
+            counts["positions"] += 1
+            table.add(r)
+
+    feed = LineFeed("ADS-B", args.address, on_line, retry_s=2).start()
+    print(f"Listening on {args.address} for {args.seconds:.0f} s ...")
+    t0 = time.time()
+    try:
+        while time.time() - t0 < args.seconds:
+            time.sleep(5)
+            state = "connected" if feed.connected else f"NOT connected ({feed.error or 'waiting'})"
+            print(f"  {time.time() - t0:4.0f}s  {state}  {counts['lines']} messages, "
+                  f"{counts['positions']} positions, {len(parser.targets)} aircraft heard", flush=True)
+    except KeyboardInterrupt:
+        pass
+    feed.stop()
+    rows = []
+    for r in table.active(args.seconds + 60):
+        az, el, rng = look_angles(args.lat, args.lon, args.elev, r.lat, r.lon,
+                                  r.alt_m if r.alt_m is not None else args.elev)
+        rows.append((rng, r, az, el))
+    rows.sort(key=lambda x: x[0])
+    print(f"\nAircraft with position: {len(rows)} (of {len(parser.targets)} heard)")
+    print(f"{'ICAO':>7} {'callsign':>9} {'km':>6} {'bearing':>8} {'elev':>6} {'alt ft':>7}")
+    for rng, r, az, el in rows:
+        alt = f"{r.alt_m / 0.3048:.0f}" if r.alt_m is not None else "-"
+        print(f"{r.addr:>7} {r.callsign:>9} {rng / 1000:6.1f} {az:7.0f}° {el:5.1f}° {alt:>7}")
+    if not counts["lines"]:
+        print("\nNo data: is dump1090 running with --net, and is the stick on the WinUSB driver (Zadig)?")
+    elif not rows:
+        print("\nMessages but no positions yet: let it run longer, put the antenna at a window.")
+    return 0
+
+
 def _cmd_probe(args) -> int:
     """Try resolutions, pixel formats and frame rates; report what the camera really delivers.
 
@@ -653,6 +699,14 @@ def build_parser() -> argparse.ArgumentParser:
     sx = sub.add_parser("session-stats", help="check a recorded session: frame rate, gaps, drops")
     sx.add_argument("session")
     sx.set_defaults(func=_cmd_session_stats)
+
+    ab = sub.add_parser("adsb-check", help="list aircraft received from dump1090 (SBS port)")
+    ab.add_argument("--address", default="127.0.0.1:30003")
+    ab.add_argument("--seconds", type=float, default=60)
+    ab.add_argument("--lat", type=float, default=46.4603, help="your position (default LIPB)")
+    ab.add_argument("--lon", type=float, default=11.3264)
+    ab.add_argument("--elev", type=float, default=241.0, help="m above MSL")
+    ab.set_defaults(func=_cmd_adsb_check)
 
     pr = sub.add_parser("probe", help="test which resolutions/formats/fps a camera really delivers")
     pr.add_argument("--camera", default="usb:0")

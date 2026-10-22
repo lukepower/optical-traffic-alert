@@ -130,18 +130,23 @@ engine noise but below radio traffic.
 
 ## 6. ADS-B with an RTL-SDR (optional)
 
-1. Plug in the RTL-SDR Blog V4.
-2. With [Zadig](https://zadig.akeo.ie/) install the WinUSB driver for "Bulk-In, Interface (Interface 0)".
-3. Start a Windows build of dump1090 that offers SBS output on port 30003, e.g.:
+Tested stick: Nooelec NESDR SMArt v5 (RTL2832U + R820T2); an RTL-SDR Blog V4 works the same way.
 
-```powershell
-dump1090.exe --interactive --net
-```
+1. **Driver:** plug in the stick, start [Zadig](https://zadig.akeo.ie/), *Options → List All Devices*,
+   choose **"Bulk-In, Interface (Interface 0)"** (sometimes listed as RTL2838UHIDIR), driver
+   **WinUSB**, *Replace Driver*. Windows' own DVB-T driver must not be used.
+2. **dump1090 for Windows:** [gvanem/Dump1090](https://github.com/gvanem/Dump1090) (maintained, serves
+   SBS/BaseStation on port 30003, map on http://localhost:8080). *Code → Download ZIP*, unzip to
+   `F:\Programming\dump1090`. If the ZIP contains no ready `dump1090.exe`, see the project's build
+   notes or use another Windows build that offers `--net` and port 30003.
+3. **Antenna** at a window with a free view, as high as possible; ADS-B is line of sight.
+4. Double-click **`tools\adsb_test.bat`**: checks the driver, starts dump1090 (`--net --interactive`)
+   and lists the received aircraft with distance and direction (`ota adsb-check`).
+
+In the OTA Recorder enter the path of `dump1090.exe` in *Traffic & sensors*; it is then started
+and stopped with each recording.
 
 Alternatively readsb in WSL2 (USB pass-through with `usbipd-win`).
-
-4. Set `adsb.enabled: true` in `config/default.yaml`. (Fusion in the pipeline follows in a later
-   version; the parser is done and tested.)
 
 ## 7. IMU (optional, for flight tests)
 
