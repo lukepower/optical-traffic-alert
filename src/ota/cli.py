@@ -418,12 +418,20 @@ def _cmd_cameras(args) -> int:
     import platform
     import cv2
     backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+    names: list[str] = []
+    if platform.system() == "Windows":
+        try:  # DirectShow device names, in the same order as OpenCV's indices
+            from pygrabber.dshow_graph import FilterGraph
+            names = FilterGraph().get_input_devices()
+        except Exception:
+            names = []
     found = False
     for i in range(args.max):
         cap = cv2.VideoCapture(i, backend)
         if cap.isOpened():
             w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"usb:{i}  default {w}x{h}")
+            name = f"  {names[i]}" if i < len(names) else ""
+            print(f"usb:{i}  default {w}x{h}{name}")
             found = True
         cap.release()
     if not found:

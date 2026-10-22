@@ -18,6 +18,18 @@ Start-Transcript -Path $Log -Force | Out-Null
 
 function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
+# Run a program and show its output so that it also ends up in the log
+# (Start-Transcript in Windows PowerShell does not record output of .exe programs).
+function Run([string]$exe, [string[]]$arguments) {
+    $tmp = [System.IO.Path]::GetTempFileName()
+    $p = Start-Process -FilePath $exe -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $tmp -RedirectStandardError "$tmp.err"
+    $out = @(Get-Content $tmp) + @(Get-Content "$tmp.err")
+    $out | ForEach-Object { Write-Host $_ }
+    Remove-Item $tmp, "$tmp.err" -ErrorAction SilentlyContinue
+    return ,$out
+}
+
 try {
     Step "Python"
     $py = $null
@@ -33,7 +45,7 @@ try {
     if (-not (Test-Path ".venv\Scripts\python.exe")) { & $py[0] $py[1..9] -m venv .venv }
     $vpy = Join-Path $Root ".venv\Scripts\python.exe"
     & $vpy -m pip install --quiet --upgrade pip
-    & $vpy -m pip install --quiet -e ".[openvino]"
+    & $vpy -m pip install --quiet -e ".[openvino]" pygrabber
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
     Step "System"
@@ -43,18 +55,18 @@ try {
         Select-Object FriendlyName, InstanceId | Format-Table -AutoSize | Out-String | Write-Host
 
     Step "Cameras"
-    $list = & $vpy -m ota cameras --max 6
-    $list | Write-Host
+    $list = Run $vpy @("-m", "ota", "cameras", "--max", "6")
     $indices = @($list | Select-String -Pattern '^usb:(\d+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
     if ($indices.Count -eq 0) { throw "No camera found. Is it plugged in (blue USB 3 port)? Close other camera apps." }
 
     foreach ($i in $indices | Select-Object -First $MaxCameras) {
         Step "Probe usb:$i (takes about a minute)"
-        & $vpy -m ota probe --camera "usb:$i" --fps 30 --frames 30 --snapshot "data\raw\probe_4k_usb$i.png"
+        Run $vpy @("-m", "ota", "probe", "--camera", "usb:$i", "--fps", "30", "--frames", "30",
+                   "--snapshot", "data\raw\probe_4k_usb$i.png") | Out-Null
     }
 
     Step "Speed of this PC at 4K"
-    & $vpy -m ota bench
+    Run $vpy @("-m", "ota", "bench") | Out-Null
 
     Step "Done"
     Write-Host "Results: $Log" -ForegroundColor Green
