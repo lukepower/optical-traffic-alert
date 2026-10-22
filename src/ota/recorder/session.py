@@ -82,7 +82,7 @@ class SessionSettings:
     adsb_enabled: bool = True
     adsb_address: str = "127.0.0.1:30003"
     dump1090_path: str = ""         # optional: start dump1090.exe automatically
-    dump1090_args: str = "--net --quiet"
+    dump1090_args: str = "--net"
     ogn_online: bool = True
     ogn_radius_km: float = 50.0
     ogn_local: bool = False
@@ -536,6 +536,26 @@ def make_feeds(s: SessionSettings, logger: TrafficLogger, imu: "ImuLogger | None
 
 # --- session --------------------------------------------------------------------------------------
 
+def bundled_dump1090() -> str | None:
+    """dump1090.exe shipped next to OTA-Recorder.exe (dump1090\\dump1090.exe), if any."""
+    import sys
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else None
+    if base is None:
+        return None
+    exe = base / "dump1090" / "dump1090.exe"
+    return str(exe) if exe.exists() else None
+
+
+def _port_open(address: str) -> bool:
+    import socket
+    host, _, port = address.rpartition(":")
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.5):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
 def session_name(s: SessionSettings, t: float | None = None) -> str:
     stamp = dt.datetime.fromtimestamp(t or time.time(), tz=dt.timezone.utc).strftime("%Y%m%d-%H%M%SZ")
     station = "".join(ch for ch in s.station_name if ch.isalnum() or ch in "-_") or "station"
@@ -656,6 +676,11 @@ class SessionRecorder:
 
     def _start_dump1090(self) -> None:
         path = self.s.dump1090_path.strip()
+        if not path and self.s.adsb_enabled:
+            path = bundled_dump1090() or ""
+            local = self.s.adsb_address.split(":")[0] in ("127.0.0.1", "localhost")
+            if not local or (path and _port_open(self.s.adsb_address)):
+                path = ""  # remote feed, or a dump1090 is already running
         if not (self.s.adsb_enabled and path):
             return
         exe = Path(path)

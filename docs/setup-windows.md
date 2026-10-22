@@ -135,10 +135,12 @@ Tested stick: Nooelec NESDR SMArt v5 (RTL2832U + R820T2); an RTL-SDR Blog V4 wor
 1. **Driver:** plug in the stick, start [Zadig](https://zadig.akeo.ie/), *Options → List All Devices*,
    choose **"Bulk-In, Interface (Interface 0)"** (sometimes listed as RTL2838UHIDIR), driver
    **WinUSB**, *Replace Driver*. Windows' own DVB-T driver must not be used.
-2. **dump1090 for Windows:** [gvanem/Dump1090](https://github.com/gvanem/Dump1090) (maintained, serves
-   SBS/BaseStation on port 30003, map on http://localhost:8080). *Code → Download ZIP*, unzip to
-   `F:\Programming\dump1090`. If the ZIP contains no ready `dump1090.exe`, see the project's build
-   notes or use another Windows build that offers `--net` and port 30003.
+2. **dump1090 for Windows:** [gvanem/Dump1090](https://github.com/gvanem/Dump1090) (maintained, MIT,
+   serves SBS/BaseStation on port 30003, map on http://localhost:8080). It is distributed as source:
+   *Code → Download ZIP*, unzip to `F:\Programming\dump1090`, then double-click
+   **`tools\build_dump1090.bat`**. The script finds Visual Studio / Build Tools (offers to install
+   "Build Tools for Visual Studio 2022" with winget if missing), builds `dump1090.exe` with CMake and
+   adapts `dump1090.cfg`.
 3. **Antenna** at a window with a free view, as high as possible; ADS-B is line of sight.
 4. Double-click **`tools\adsb_test.bat`**: checks the driver, starts dump1090 (`--net --interactive`)
    and lists the received aircraft with distance and direction (`ota adsb-check`).
