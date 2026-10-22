@@ -56,6 +56,10 @@ For in-flight tests with the laptop recorder:
 | USB GPS receiver | any u-blox USB "GPS mouse" (e.g. VK-172 with u-blox 7, or an M8/M10 USB puck) | €15–40 | own position and track; NMEA, appears as a COM port |
 | Attitude sensor (IMU) | **WitMotion WT901C / HWT901B with USB** (or TTL version + USB-TTL adapter) | €30–70 | camera attitude in turns; up to 200 Hz, ready-made, no soldering |
 
+**TTL versions** (e.g. WT901C-TTL, four wires VCC/GND/TX/RX) need a USB-TTL adapter (CP2102, CH340
+or FTDI, ~€5–10): VCC → 5 V, GND → GND, sensor **TX → adapter RX**, sensor **RX → adapter TX**.
+`tools\imu_test.bat` finds the adapter and tries 115200 and 9600 baud.
+
 **Mount the IMU rigidly on the camera bracket**: X axis (arrow on the module) along the optical axis,
 Z axis up in the image. Then it measures the **camera's** attitude, including how the mount
 sits in the aircraft. Set it once to 100–200 Hz and 115200 baud with the WitMotion PC software.

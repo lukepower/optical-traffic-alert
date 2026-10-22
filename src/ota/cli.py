@@ -288,7 +288,30 @@ def _cmd_imu_check(args) -> int:
             state["n"] += 1
             state["last"] = smp
 
-    feed = LineFeed("IMU", args.port, on_data, binary=True).start()
+    port = args.port
+    if port == "auto":
+        cands = [p for p in _list_ports() if p.vid in (0x1A86, 0x10C4, 0x0403, 0x067B) and p.vid != 0x1546]
+        if not cands:
+            print("No USB-serial adapter found - see 'ota ports' and use --port COMx@115200")
+            return 1
+        port = cands[0].device
+    # try the usual WitMotion baud rates until packets arrive
+    bauds = [port.split("@")[1]] if "@" in port else ["115200", "9600"]
+    feed = None
+    for baud in bauds:
+        address = f"{port.split('@')[0]}@{baud}"
+        feed = LineFeed("IMU", address, on_data, binary=True).start()
+        t_wait = time.time()
+        while time.time() - t_wait < 4 and state["n"] == 0:
+            time.sleep(0.2)
+        if state["n"]:
+            print(f"Receiving from {address}")
+            break
+        feed.stop()
+        print(f"No WitMotion packets on {address}")
+    if not state["n"]:
+        print("Check wiring (sensor TX -> adapter RX, RX -> TX, VCC 5V, GND) and the COM port.")
+        return 1
     print("Tilt the camera nose UP: 'pitch' must become positive. Lower the RIGHT side: 'roll' "
           "positive. Ctrl+C to stop.\n")
     t0, n0 = time.time(), 0
@@ -771,7 +794,7 @@ def build_parser() -> argparse.ArgumentParser:
     ds.set_defaults(func=_cmd_dataset)
 
     ic = sub.add_parser("imu-check", help="live view of the attitude sensor (axes, rate)")
-    ic.add_argument("--port", default="COM6@115200")
+    ic.add_argument("--port", default="auto", help="COMx[@baud] or 'auto' (USB-serial adapter)")
     ic.set_defaults(func=_cmd_imu_check)
 
     sx = sub.add_parser("session-stats", help="check a recorded session: frame rate, gaps, drops")
