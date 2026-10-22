@@ -325,8 +325,15 @@ def _cmd_probe(args) -> int:
     kind, index = parse_camera(args.camera)
     modes = [(3840, 2160)] if args.only_4k else [(3840, 2160), (2560, 1440), (1920, 1080)]
     print(f"Probing {args.camera} ({args.frames} frames per mode)\n")
-    print(f"{'requested':>22} | {'delivered':>11} {'format':>10} {'fps':>6}")
-    print("-" * 56)
+    print(f"{'requested':>22} | {'delivered':>11} {'format':>10} {'fps':>6}  compression")
+    print("-" * 70)
+
+    def blockiness(img) -> float:
+        """JPEG leaves steps at 8-pixel block borders: ratio ~1.0 = uncompressed, > 1.15 = compressed."""
+        import numpy as np
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        d = np.abs(np.diff(g, axis=1))
+        return float(d[:, 7::8].mean() / max(np.delete(d, np.s_[7::8], axis=1).mean(), 1e-6))
     snaps: dict[str, object] = {}
 
     def measure(fmt: str, w: int, h: int, fps_req: float):
@@ -342,7 +349,11 @@ def _cmd_probe(args) -> int:
             gw, gh = (img.shape[1], img.shape[0]) if img is not None and n else (0, 0)
             got = fourcc_str(cap.get(cv2.CAP_PROP_FOURCC)) or "?"
             fps = n / dt if dt > 0 else 0
-            print(f"{fmt:>5} {w:>5}x{h:<5} @{fps_req:>3.0f} | {gw:>5}x{gh:<5} {got:>10} {fps:6.1f}",
+            comp = ""
+            if gw:
+                b = blockiness(img)
+                comp = f"{'JPEG blocks' if b > 1.15 else 'none'} ({b:.2f})"
+            print(f"{fmt:>5} {w:>5}x{h:<5} @{fps_req:>3.0f} | {gw:>5}x{gh:<5} {got:>10} {fps:6.1f}  {comp}",
                   flush=True)
             return (img if gw else None), gw
         finally:
@@ -372,7 +383,8 @@ def _cmd_probe(args) -> int:
         print("Zoom into it: are single pixels sharp, or blocky (compression)?")
     else:
         print("\nNo 4K mode delivered.")
-    print("\nIdeal: YUY2 3840x2160 with >= 10 fps. Set camera pixel_format in the config accordingly.")
+    print("\nIdeal: 3840x2160 with >= 10 fps and compression 'none'. Note: Media Foundation (msmf:)"
+          "\nmay ignore the requested format and deliver MJPG - check the compression column.")
     return 0
 
 

@@ -69,7 +69,7 @@ try {
     # skip virtual cameras and webcams that are certainly not the test camera
     $sources = @($list | Where-Object { $_ -match '^(usb|msmf):\d+' -and $_ -notmatch 'BRIO|Eyeware|OBS|Virtual' } |
         ForEach-Object { ($_ -split '\s+')[0] })
-    if ($Camera) { $sources = @($Camera) }
+    if ($Camera) { $sources = @($Camera -split ',') }
     if ($sources.Count -eq 0) { throw "No camera found. Is it plugged in (blue USB 3 port)? Close other camera apps." }
 
     foreach ($src in $sources | Select-Object -First $MaxCameras) {
