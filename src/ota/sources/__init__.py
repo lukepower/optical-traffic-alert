@@ -92,8 +92,10 @@ class VideoFileSource(FrameSource):
 
 
 def fourcc_str(value: float) -> str:
-    v = int(value)
-    return "".join(chr((v >> 8 * i) & 0xFF) for i in range(4)).strip("\x00")
+    """FOURCC code as text; drivers sometimes report garbage -> shown as hex."""
+    v = int(value) & 0xFFFFFFFF
+    s = "".join(chr((v >> 8 * i) & 0xFF) for i in range(4)).strip("\x00")
+    return s if s and all(32 <= ord(c) < 127 for c in s) else (f"0x{v:08X}" if v else "?")
 
 
 def open_usb_camera(index: int, width: int, height: int, fps: float, pixel_format: str = "YUY2",

@@ -415,24 +415,31 @@ def _cmd_bench(args) -> int:
 
 
 def _cmd_cameras(args) -> int:
+    """List cameras. On Windows also shows the DirectShow names, including cameras that
+    cannot be opened (in use by another program, driver problem)."""
     import platform
     import cv2
-    backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+    win = platform.system() == "Windows"
+    backend = cv2.CAP_DSHOW if win else cv2.CAP_ANY
     names: list[str] = []
-    if platform.system() == "Windows":
+    if win:
         try:  # DirectShow device names, in the same order as OpenCV's indices
             from pygrabber.dshow_graph import FilterGraph
             names = FilterGraph().get_input_devices()
         except Exception:
             names = []
     found = False
-    for i in range(args.max):
+    for i in range(max(args.max, len(names))):
         cap = cv2.VideoCapture(i, backend)
+        name = f"  {names[i]}" if i < len(names) else ""
         if cap.isOpened():
+            ok, img = cap.read()
             w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            name = f"  {names[i]}" if i < len(names) else ""
-            print(f"usb:{i}  default {w}x{h}{name}")
+            state = "" if ok else "  (opened, but no image - in use by another program?)"
+            print(f"usb:{i}  default {w}x{h}{name}{state}")
             found = True
+        elif name:
+            print(f"--      CANNOT OPEN usb:{i}{name}  - in use by another program, or driver problem")
         cap.release()
     if not found:
         print("No cameras found.")
